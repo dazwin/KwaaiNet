@@ -91,9 +91,54 @@ The following areas need contributors. Pick what interests you and open a PR or 
 - [ ] Smoke-test `kwaainet start`, `status`, `stop`, `serve` end-to-end on Windows 10/11
 - [ ] Add Windows to the CI platform matrix (see Testing section below)
 
+### Trust Graph (kwaai-trust) — **Phase 2 next up**
+
+> **Context**: The `kwaai-trust` crate ships Phase 1 (VC data model, `did:peer:`
+> utilities, credential storage, Ed25519 verification, weighted trust scoring,
+> `kwaainet identity` CLI). The items below are the Phase 2–4 work needed to
+> make trust a live network feature rather than a local tool.
+
+**Phase 2 — Credential issuance (Q2 2026)**
+- [ ] Build the summit on-ramp server that issues `SummitAttendeeVC` on QR scan
+      (signs with its own Ed25519 keypair; returns VC JSON for the attendee to import)
+- [ ] Build the GliaNet pledge endpoint that issues `FiduciaryPledgeVC`
+      (`kwaainet pledge sign` flow — submits pledge hash, receives signed VC)
+- [ ] Build the Kwaai Foundation onboarding endpoint that issues `VerifiedNodeVC`
+- [ ] Implement `kwaainet pledge sign` CLI command
+- [ ] Expose trust tier and badge data in the map.kwaai.ai health-monitor API
+      (parse `trust_attestations` field from DHT `ServerInfo`; verify signatures)
+
+**Phase 3 — Automated issuance (Q3 2026)**
+- [ ] Bootstrap server uptime tracking: auto-issue `UptimeVC` after N days of
+      observed availability (threshold and period configurable in governance config)
+- [ ] Peer throughput witnessing: nodes that forward inference requests record
+      measured vs announced throughput; issue `ThroughputVC` when within tolerance
+- [ ] Implement VC revocation check (issuer publishes revocation list; verifier
+      consults it before accepting a credential)
+
+**Phase 4 — EigenTrust propagation (Q3 2026)**
+- [ ] `PeerEndorsementVC` issuance flow: after N successful inference transactions,
+      the requesting node offers a signed endorsement to the serving node
+- [ ] Implement `TrustScore::from_endorsement_graph()` — 2-hop EigenTrust propagation
+      over the endorsement graph stored in the credential store
+- [ ] Sybil resistance: weight endorsements by endorser's own trust score
+- [ ] Persist the endorsement graph locally for offline score queries
+
+**Phase 5 — Optional DID binding (Q4 2026)**
+- [ ] `kwaainet identity link --did did:vda:...` — bind a user-level DID to the
+      node's `did:peer:` via a signed assertion; store the binding VC locally
+- [ ] Support `did:web`, ENS, and `did:ion` as external identity anchors
+- [ ] Update trust score to incorporate bound DID's reputation (if available)
+
+**Infrastructure**
+- [ ] Trust registry contract / JSON-LD context at `https://kwaai.ai/credentials/v1`
+      listing authoritative issuers per VC type and their public key DIDs
+- [ ] VC schema validation (JSON Schema per credential type)
+- [ ] Expand `kwaai-trust` unit tests: sign → verify round-trip, expiry edge cases,
+      malformed proof rejection, time-decay boundary values
+
 ### P2P Networking (Hivemind / libp2p)
 - [ ] Implement NAT traversal improvements (relay fallback, hole-punching)
-- [ ] Add peer reputation / scoring system
 - [ ] DHT optimisations for large peer sets (>1 000 nodes)
 - [ ] Write integration tests for multi-node scenarios
 
