@@ -9,6 +9,7 @@
 ## ✅ Status: Network Live & Operational
 
 **Latest Achievements:**
+- ✅ **Bootstrap Resilience** — node announces to all configured bootstrap peers in parallel; if the primary is down the secondary takes over automatically, so `kwaainet start` succeeds even when `bootstrap-1` is unreachable
 - ✅ **`kwaainet start --daemon`** — one command starts a fully managed background node, confirmed **online** on [map.kwaai.ai](https://map.kwaai.ai)
 - ✅ **`kwaainet serve`** — OpenAI-compatible API server (`/v1/models`, `/v1/chat/completions`, `/v1/completions` with SSE streaming); any OpenAI client library works out of the box
 - ✅ **GGUF Tokenizer Special Tokens Fixed** — control tokens (e.g. `<|eot_id|>`) are now registered as `added_tokens` in the HuggingFace tokenizer; generation stops correctly at EOS instead of running to the token limit and leaking raw special-token strings into responses
@@ -315,7 +316,7 @@ kwaainet start --model llama3.1:8b --daemon
 6. 🔗 Registers Hivemind RPC handlers (`rpc_ping`, `rpc_store`, `rpc_find`)
 7. ⏳ Waits 30 s for DHT bootstrap connections to stabilise
 8. ⚡ Measures network bandwidth; computes `effective_tps = min(compute, network)`
-9. 📡 Announces blocks + model info to the DHT with the correct swarm prefix
+9. 📡 Announces blocks + model info to all bootstrap peers (falls back to secondary if primary is down)
 10. ✅ Node appears on [map.kwaai.ai](https://map.kwaai.ai) under the right model
 11. 🔄 Re-announces every 120 s to stay visible
 
