@@ -7,6 +7,7 @@ mod config;
 mod daemon;
 mod display;
 mod health;
+mod identity;
 mod map;
 mod monitor;
 mod node;
@@ -805,6 +806,13 @@ async fn main() -> Result<()> {
         // -------------------------------------------------------------------
         Command::Serve(args) => {
             serve_command(args).await?;
+        }
+
+        // -------------------------------------------------------------------
+        // identity
+        // -------------------------------------------------------------------
+        Command::Identity(args) => {
+            identity::run_identity_command(args).await?;
         }
 
         // -------------------------------------------------------------------

@@ -73,6 +73,9 @@ pub enum Command {
     /// Initial setup
     Setup,
 
+    /// Manage node identity and verifiable credentials
+    Identity(IdentityArgs),
+
     /// Internal: run the node in the foreground (used by daemon mode)
     #[command(hide = true)]
     RunNode,
@@ -284,6 +287,36 @@ pub struct ServeArgs {
     /// HTTP port for the OpenAI-compatible API
     #[arg(long, default_value = "11435")]
     pub port: u16,
+}
+
+// ---------------------------------------------------------------------------
+// identity
+// ---------------------------------------------------------------------------
+
+#[derive(Args)]
+pub struct IdentityArgs {
+    #[command(subcommand)]
+    pub action: IdentityAction,
+}
+
+#[derive(Subcommand)]
+pub enum IdentityAction {
+    /// Show this node's DID, Peer ID, trust tier, and credential summary
+    Show,
+    /// Import a Verifiable Credential from a JSON file into the local store
+    ImportVc {
+        /// Path to the VC JSON file (e.g. summit-attendee-vc.json)
+        #[arg(value_name = "FILE")]
+        path: std::path::PathBuf,
+    },
+    /// List all stored Verifiable Credentials
+    ListVcs,
+    /// Verify a Verifiable Credential (structure check + Ed25519 signature)
+    VerifyVc {
+        /// Path to the VC JSON file to verify
+        #[arg(value_name = "FILE")]
+        path: std::path::PathBuf,
+    },
 }
 
 // ---------------------------------------------------------------------------

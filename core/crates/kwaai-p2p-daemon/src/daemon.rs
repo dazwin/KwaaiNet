@@ -24,6 +24,9 @@ pub struct DaemonBuilder {
     announce_addrs: Vec<String>,
     metrics: bool,
     metrics_addr: Option<String>,
+    /// Path to a protobuf-encoded Ed25519 private key file (`-id` flag).
+    /// When set, p2pd uses this key so the PeerId is stable across restarts.
+    identity_key_path: Option<PathBuf>,
 }
 
 impl Default for DaemonBuilder {
@@ -41,6 +44,7 @@ impl Default for DaemonBuilder {
             announce_addrs: Vec::new(),
             metrics: false,
             metrics_addr: None,
+            identity_key_path: None,
         }
     }
 }
@@ -148,6 +152,20 @@ impl DaemonBuilder {
         self
     }
 
+    /// Set the path to a protobuf-encoded Ed25519 private key file (`-id` flag)
+    ///
+    /// When provided, p2pd uses this key so the node's `PeerId` is stable
+    /// across restarts. This is a prerequisite for meaningful Verifiable
+    /// Credentials — credentials are bound to a DID that must not change.
+    ///
+    /// The file must contain the raw bytes of a libp2p protobuf-encoded private
+    /// key (`Keypair::to_protobuf_encoding()`), compatible with Go's
+    /// `crypto.UnmarshalPrivateKey`.
+    pub fn with_identity_key<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.identity_key_path = Some(path.into());
+        self
+    }
+
     /// Spawn the daemon process
     pub async fn spawn(self) -> Result<P2PDaemon> {
         let binary_path = self
@@ -233,6 +251,12 @@ impl DaemonBuilder {
         // Bootstrap peers
         for peer in &self.bootstrap_peers {
             cmd.arg("-bootstrapPeers").arg(peer);
+        }
+
+        // Persistent identity key — makes PeerId stable across restarts
+        if let Some(ref key_path) = self.identity_key_path {
+            info!("Using persistent identity key: {}", key_path.display());
+            cmd.arg("-id").arg(key_path);
         }
 
         // Redirect stderr for logging

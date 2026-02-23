@@ -9,6 +9,7 @@ members = [
     "crates/kwaai-hivemind-dht",
     "crates/kwaai-p2p-daemon",
     "crates/kwaai-cli",
+    "crates/kwaai-trust",
 ]
 
 # Root package for examples
@@ -168,6 +169,11 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = "0.3"
+
+# Trust graph — verifiable credentials and DID utilities
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["serde"] }
+dirs = "5"
 
 # Testing
 criterion = "0.5"

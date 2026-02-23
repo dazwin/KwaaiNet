@@ -21,6 +21,7 @@ use tracing::{info, warn};
 
 use crate::config::KwaaiNetConfig;
 use crate::daemon::DaemonManager;
+use crate::identity::NodeIdentity;
 
 type SharedStorage = Arc<RwLock<DHTStorage>>;
 
@@ -30,6 +31,11 @@ type SharedStorage = Arc<RwLock<DHTStorage>>;
 
 /// Server info serialised as ExtType(64, [state, throughput, {fields}])
 /// — the exact format Python Hivemind / map.kwaai.ai expects.
+///
+/// The optional `trust_attestations` field carries the node's Verifiable
+/// Credentials as compact JSON strings. Clients that understand the KwaaiNet
+/// trust model (e.g., map.kwaai.ai v2) display trust badges; legacy clients
+/// ignore the field.
 struct DHTServerInfo {
     state: i32,
     throughput: f64,
@@ -42,10 +48,21 @@ struct DHTServerInfo {
     cache_tokens_left: i64,
     next_pings: HashMap<String, f64>,
     adapters: Vec<String>,
+    /// Compact JSON representations of the node's valid Verifiable Credentials.
+    /// Empty when no credentials are stored; included in the DHT fields map
+    /// only when non-empty to keep announcement payloads minimal.
+    trust_attestations: Vec<String>,
 }
 
 impl DHTServerInfo {
-    fn new(start: i32, end: i32, name: &str, relay: bool, throughput: f64) -> Self {
+    fn new(
+        start: i32,
+        end: i32,
+        name: &str,
+        relay: bool,
+        throughput: f64,
+        trust_attestations: Vec<String>,
+    ) -> Self {
         Self {
             state: 2, // ONLINE
             throughput,
@@ -58,6 +75,7 @@ impl DHTServerInfo {
             cache_tokens_left: 100_000,
             next_pings: HashMap::new(),
             adapters: vec![],
+            trust_attestations,
         }
     }
 
@@ -73,6 +91,20 @@ impl DHTServerInfo {
             (rmpv::Value::from("adapters"),          rmpv::Value::Array(vec![])),
             (rmpv::Value::from("next_pings"),        rmpv::Value::Map(vec![])),
         ];
+
+        // Include trust attestations when present — zero-cost for nodes without VCs.
+        // Legacy clients (Python Hivemind, old map viewers) ignore unknown fields.
+        if !self.trust_attestations.is_empty() {
+            let ta_values: Vec<rmpv::Value> = self
+                .trust_attestations
+                .iter()
+                .map(|s| rmpv::Value::String(rmpv::Utf8String::from(s.as_str())))
+                .collect();
+            fields.push((
+                rmpv::Value::from("trust_attestations"),
+                rmpv::Value::Array(ta_values),
+            ));
+        }
 
         let inner = rmpv::Value::Array(vec![
             rmpv::Value::from(self.state),
@@ -137,6 +169,40 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     daemon_mgr.write_pid(std::process::id()).context("writing PID")?;
     info!("KwaaiNet node starting (PID {})", std::process::id());
 
+    // -----------------------------------------------------------------------
+    // Persistent identity — load or generate the Ed25519 keypair so the
+    // PeerId is stable across restarts. Credentials are bound to this DID.
+    // -----------------------------------------------------------------------
+    let node_identity = NodeIdentity::load_or_create().context("loading node identity")?;
+    let node_did = node_identity.did();
+    info!("Node DID: {}", node_did);
+
+    // Load valid VCs for this node's DID to include in DHT announcements
+    let trust_attestations = match kwaai_trust::CredentialStore::open_default() {
+        Ok(store) => {
+            let vcs = store.load_valid_for_subject(&node_did);
+            if vcs.is_empty() {
+                info!("Trust attestations: none (run `kwaainet identity import-vc` to add)");
+            } else {
+                info!("Trust attestations: {} valid VC(s)", vcs.len());
+                for vc in &vcs {
+                    info!(
+                        "  [{}] issued by {}",
+                        vc.kwaai_type().map(|t| t.as_str()).unwrap_or("Unknown"),
+                        &vc.issuer_did()[..vc.issuer_did().len().min(32)]
+                    );
+                }
+            }
+            vcs.iter()
+                .filter_map(|vc| vc.to_compact_json().ok())
+                .collect::<Vec<_>>()
+        }
+        Err(e) => {
+            warn!("Could not open credential store: {} — proceeding without VCs", e);
+            vec![]
+        }
+    };
+
     let public_name = config
         .public_name
         .clone()
@@ -172,6 +238,8 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         format!("/ip4/{}/tcp/{}", ip, config.port)
     });
 
+    let identity_key_path = NodeIdentity::key_file_path();
+
     let builder = P2PDaemon::builder()
         .dht(true)
         .relay(!config.no_relay)
@@ -179,7 +247,8 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         .auto_nat(true)
         .nat_portmap(true)
         .host_addrs([host_addr])
-        .bootstrap_peers(bootstrap_peers.clone());
+        .bootstrap_peers(bootstrap_peers.clone())
+        .with_identity_key(&identity_key_path);
 
     let builder = if let Some(ref addr) = announce_addr {
         builder.announce_addrs([addr.as_str()])
@@ -301,6 +370,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         &public_name,
         using_relay,
         throughput,
+        trust_attestations,
     );
     announce(
         &mut client,
