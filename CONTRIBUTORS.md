@@ -174,6 +174,8 @@ The following areas need contributors. Pick what interests you and open a PR or 
 - [ ] Add CI platform matrix (Linux, macOS, Windows, WASM)
 - [ ] End-to-end test harness for multi-node inference
 - [ ] Performance regression benchmarks in CI
+- [ ] Smoke-test `summit-server` Docker image end-to-end (passkey registration → VC issuance → node bind)
+- [ ] Add Docker build to CI so image is validated on every PR, not only on release tags
 
 ### Documentation
 - [ ] API reference (auto-generated via `cargo doc`, published to docs.rs)
