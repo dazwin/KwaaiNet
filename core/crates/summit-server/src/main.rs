@@ -3,14 +3,26 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::{
     Router,
+    http::{header, StatusCode},
+    response::IntoResponse,
     routing::{get, post},
 };
 use tower_http::{
     cors::{Any, CorsLayer},
-    services::ServeDir,
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+// Embed the page at compile time — no filesystem path issues at runtime
+static INDEX_HTML: &str = include_str!("../static/index.html");
+
+async fn serve_index() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        INDEX_HTML,
+    )
+}
 
 mod config;
 mod db;
@@ -57,7 +69,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .nest("/api", api)
-        .nest_service("/", ServeDir::new("static"))
+        .route("/", get(serve_index))
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
