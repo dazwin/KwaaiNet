@@ -141,6 +141,7 @@ The following areas need contributors. Pick what interests you and open a PR or 
 - [ ] Implement NAT traversal improvements (relay fallback, hole-punching)
 - [ ] DHT optimisations for large peer sets (>1 000 nodes)
 - [ ] Write integration tests for multi-node scenarios
+- [ ] Port conflict resolution for multiple nodes behind the same WAN IP — detect when `public_ip` matches another already-announced node on the same port, warn the user, and suggest an alternate port (`kwaainet config --set port <N>`)
 
 ### Storage Integrations
 - [ ] IPFS storage provider (implement `StorageProvider` trait)
