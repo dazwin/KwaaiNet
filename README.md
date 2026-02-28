@@ -71,6 +71,9 @@ After installing, jump to [Quick Start](#kwaainet--native-rust-cli).
 ## ✅ Status: Network Live & Operational
 
 **Latest Achievements:**
+- ✅ **v0.1.3 Released** — Linux aarch64 (ARM64) added as a first-class release target; smart default node name (`{user}-{os}-{arch}`); release workflow race condition fixed so all platform binaries upload reliably in parallel
+- ✅ **Linux ARM64 Support** — native `aarch64-unknown-linux-gnu` binary built on `ubuntu-24.04-arm` runner; works on Oracle Ampere, AWS Graviton, Raspberry Pi 5, and any ARM64 Linux host
+- ✅ **Smart Default Node Name** — `kwaainet setup` now generates `{USER}-{OS}-{ARCH}` (e.g. `alice-linux-aarch64`) instead of `anonymous@kwaai`, making nodes identifiable on the map without manual configuration
 - ✅ **v0.1.1 Released** — first public release with native pre-built binaries for all four platforms; install cycle validated stop → download → install → node on map in ~46 s (no build tools required)
 - ✅ **One-Command Install** — `curl -fsSL .../install.sh | bash` auto-detects platform, installs binaries, runs setup + benchmark, and starts the node; tested on macOS and Linux
 - ✅ **All Four Platform Binaries Tested** — macOS Apple Silicon (M4) and macOS Intel built and tested natively; Linux x86_64 built and tested by Metro on a remote machine; Windows x86_64 (Intel NUC) built and uploaded — all nodes confirmed live on [map.kwaai.ai](https://map.kwaai.ai)
