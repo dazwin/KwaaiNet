@@ -46,7 +46,7 @@ echo ""
 # ── download & install ────────────────────────────────────────────────────────
 
 echo "Downloading ${ARCHIVE} ..."
-curl -fsSL "${URL}" | tar -xz -C /tmp
+curl -fsSL --fail-with-body "${URL}" | tar -xz -C /tmp
 
 echo "Installing kwaainet and p2pd to /usr/local/bin ..."
 sudo mv /tmp/kwaainet /tmp/p2pd /usr/local/bin/
