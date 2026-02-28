@@ -56,7 +56,7 @@ pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
 
     let target_blocks = args.blocks.unwrap_or(cfg.blocks) as usize;
 
-    let (start_block, end_block) = if args.auto {
+    let (start_block, end_block) = if args.auto || args.start_block.is_none() {
         let daemon_addr = daemon_socket();
         let mut qc = P2PClient::connect(&daemon_addr).await
             .context("Cannot connect to node — start it first with `kwaainet start --daemon`")?;
@@ -88,7 +88,8 @@ pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
 
         (s, e)
     } else {
-        let s = args.start_block.unwrap_or(cfg.start_block) as usize;
+        // --start-block was explicitly provided; use it as-is
+        let s = args.start_block.unwrap() as usize;
         (s, s + target_blocks)
     };
 
