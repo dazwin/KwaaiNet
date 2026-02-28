@@ -66,6 +66,7 @@ The following areas need contributors. Pick what interests you and open a PR or 
 - [ ] Benchmark Candle vs. llama.cpp bindings vs. ONNX Runtime and document results
 - [ ] Streaming token output over the RPC interface (currently returns full completion)
 - [ ] Multi-model routing (select model by capability or load)
+- [ ] Test inference end-to-end using [Open WebUI](https://github.com/open-webui/open-webui) as the frontend against `kwaainet serve` (`/v1/chat/completions`)
 
 ### Distributed Block Sharding (Petals model) — **next major milestone**
 
