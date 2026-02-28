@@ -438,6 +438,11 @@ pub struct ShardServeArgs {
     /// Disable GPU acceleration and use CPU only
     #[arg(long)]
     pub no_gpu: bool,
+
+    /// Auto-discover which blocks are unserved and load those instead of config start_block.
+    /// Uses --blocks (or config.blocks) as the target count.
+    #[arg(long)]
+    pub auto: bool,
 }
 
 #[derive(Args)]

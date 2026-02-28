@@ -341,6 +341,8 @@ impl KwaaiNetConfig {
             "public_ip" => self.public_ip = Some(value.to_string()),
             "announce_addr" => self.announce_addr = Some(value.to_string()),
             "no_relay" => self.no_relay = parse_bool(value)?,
+            "start_block" => self.start_block = value.parse()
+                .map_err(|_| anyhow::anyhow!("start_block must be a non-negative integer"))?,
             _ => anyhow::bail!("Unknown config key: {}", key),
         }
         self.save()

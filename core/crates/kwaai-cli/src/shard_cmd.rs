@@ -54,9 +54,43 @@ pub async fn run(args: ShardArgs) -> Result<()> {
 pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
     let cfg = KwaaiNetConfig::load_or_create()?;
 
-    let start_block = args.start_block.unwrap_or(cfg.start_block) as usize;
-    let blocks      = args.blocks.unwrap_or(cfg.blocks) as usize;
-    let end_block   = start_block + blocks;
+    let target_blocks = args.blocks.unwrap_or(cfg.blocks) as usize;
+
+    let (start_block, end_block) = if args.auto {
+        let daemon_addr = daemon_socket();
+        let mut qc = P2PClient::connect(&daemon_addr).await
+            .context("Cannot connect to node — start it first with `kwaainet start --daemon`")?;
+        let peer_id_hex = qc.identify().await.context("Failed to get local peer ID")?;
+        let our_peer_id = PeerId::from_bytes(&hex::decode(&peer_id_hex)?)
+            .context("parse our peer ID")?;
+        let total = cfg.model_total_blocks() as usize;
+        let prefix = cfg.model_dht_prefix.as_deref().unwrap_or("unknown");
+        let bootstrap_peers: Vec<String> = if cfg.initial_peers.is_empty() {
+            NetworkConfig::with_petals_bootstrap().bootstrap_peers
+        } else {
+            cfg.initial_peers.clone()
+        };
+
+        print_info(&format!("Querying DHT for gap in {} ({} blocks)…", prefix, total));
+        let (s, e) = pick_gap_blocks(&mut qc, &our_peer_id, prefix, total, target_blocks, &bootstrap_peers).await?;
+        print_success(&format!("Auto-assigned blocks [{}, {})", s, e));
+
+        // Persist so the DHT announcer picks up the new range on restart
+        let mut updated = cfg.clone();
+        updated.start_block = s as u32;
+        updated.save().context("Failed to save config.yaml")?;
+        print_info("Updated config.yaml — restarting node daemon to re-announce…");
+
+        // Restart daemon so it announces the new start_block (same pattern as Command::Restart)
+        let mgr = crate::daemon::DaemonManager::new();
+        if mgr.is_running() { mgr.stop_process()?; }
+        crate::daemon::DaemonManager::spawn_daemon_child(&[])?;
+
+        (s, e)
+    } else {
+        let s = args.start_block.unwrap_or(cfg.start_block) as usize;
+        (s, s + target_blocks)
+    };
 
     // Resolve model directory (CLI override > HF snapshot for config.model)
     let model_dir: PathBuf = if let Some(p) = args.model_path {
@@ -561,6 +595,43 @@ pub async fn discover_chain(
     let mut chain: Vec<BlockServerEntry> = servers.into_values().collect();
     chain.sort_by_key(|e| e.start_block);
     chain
+}
+
+// ── Gap detection ─────────────────────────────────────────────────────────────
+
+/// Query the DHT, find the first uncovered block range, and return (start, end).
+///
+/// This is the core of `kwaainet shard serve --auto`: each new node fills the
+/// next gap so the network grows toward full coverage organically.
+async fn pick_gap_blocks(
+    client: &mut P2PClient,
+    our_peer_id: &PeerId,
+    dht_prefix: &str,
+    total_blocks: usize,
+    target_blocks: usize,
+    bootstrap_peers: &[String],
+) -> Result<(usize, usize)> {
+    let chain = discover_chain(client, our_peer_id, dht_prefix, total_blocks, bootstrap_peers).await;
+
+    let mut covered = vec![false; total_blocks];
+    for e in &chain {
+        for b in e.start_block..e.end_block.min(total_blocks) {
+            covered[b] = true;
+        }
+    }
+
+    let start = covered
+        .iter()
+        .position(|&c| !c)
+        .ok_or_else(|| anyhow::anyhow!(
+            "All {} blocks already served by {} node(s). \
+             Remove --auto or add more nodes.",
+            total_blocks,
+            chain.len()
+        ))?;
+
+    let end = (start + target_blocks).min(total_blocks);
+    Ok((start, end))
 }
 
 // ── Server info decoding ──────────────────────────────────────────────────────
