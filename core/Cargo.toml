@@ -188,6 +188,9 @@ ci = ["github"]
 installers = ["shell", "powershell", "homebrew"]
 tap = "Kwaai-AI-Lab/homebrew-tap"
 publish-jobs = ["homebrew"]
+# The release.yml has been manually patched (working-directory: core) for our
+# nested workspace layout.  Suppress cargo-dist's "file is out of date" check.
+allow-dirty = ["ci"]
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
