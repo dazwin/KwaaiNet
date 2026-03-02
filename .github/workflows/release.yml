@@ -219,11 +219,7 @@ jobs:
             # Patch dist-manifest.json so the global step embeds the correct
             # post-injection checksum in the generated installer script.
             if [ -f "dist-manifest.json" ]; then
-              python3 -c "
-with open('dist-manifest.json') as f: c = f.read()
-c = c.replace('${OLD_HASH}', '${NEW_HASH}')
-with open('dist-manifest.json', 'w') as f: f.write(c)
-"
+              python3 -c "c=open('dist-manifest.json').read();open('dist-manifest.json','w').write(c.replace('${OLD_HASH}','${NEW_HASH}'))"
               echo "Patched manifest: ${OLD_HASH} -> ${NEW_HASH}"
             fi
             echo "Done: $(ls -lh ${ARCHIVE})"
