@@ -22,7 +22,7 @@
 
 ## Download
 
-Pre-built binaries for **v0.2.0** are attached to the [latest GitHub Release](https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest) — no Rust or Go toolchain required.
+Pre-built binaries for **v0.2.3** are attached to the [latest GitHub Release](https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest) — no Rust or Go toolchain required.
 
 ### Shell installer (macOS / Linux)
 
@@ -67,6 +67,8 @@ After installing, run:
 kwaainet setup && kwaainet benchmark && kwaainet start --daemon
 ```
 
+> If `kwaainet start` reports that `p2pd` is missing (e.g. manual install from a `.tar.xz`), run `kwaainet setup --get-deps` to download and install it automatically.
+
 After installing, jump to [Quick Start](#kwaainet--native-rust-cli).
 
 > Want to build from source instead? See [Building from Source](#quick-setup-all-platforms).
@@ -76,8 +78,9 @@ After installing, jump to [Quick Start](#kwaainet--native-rust-cli).
 ## ✅ Status: Network Live & Operational
 
 **Latest Achievements:**
-- ✅ **v0.2.0 Released** — fixed installer checksum mismatch (dist-manifest.json now patched with post-injection hash); all 5 platforms bundle `p2pd` correctly
-- ✅ **v0.1.9 Released** — fixed Windows zip injection (flat structure, no subdirectory); all 5 platforms now bundle `p2pd` alongside `kwaainet` so `kwaainet start` works out of the box
+- ✅ **v0.2.3 Released** — Windows fix: `kwaainet start` now correctly finds `p2pd.exe` next to the binary; verified on macOS Apple Silicon, macOS Intel, and Windows — all 3 platforms get nodes on the map
+- ✅ **v0.2.2 Released** — installer now auto-extracts `p2pd` alongside `kwaainet` into `~/.cargo/bin/`; fresh `curl … | sh` install is fully self-contained with no manual steps
+- ✅ **`kwaainet setup --get-deps`** — backup command downloads and installs `p2pd` from the latest release if it is missing (detects platform at runtime, no extra dependencies)
 - ✅ **v0.1.6 Released** — removed wrapper `install.sh`/`install.ps1` in favour of direct cargo-dist release assets; `kwaainet uninstall` now removes from all known install locations (`~/.cargo/bin/`, `~/.local/bin/`); launchd unload noise suppressed when service was never started
 - ✅ **v0.1.5 Released** — cargo-dist release automation; Homebrew tap (`brew install kwaai-ai-lab/tap/kwaainet`); SHA256-verified installers for all 5 platforms; `kwaainet update` self-update support
 - ✅ **v0.1.4 Released** — `kwaainet uninstall` command; verified Windows one-line install (`irm | iex`); clean removal of daemon, service, data, and binaries on all platforms
@@ -526,6 +529,7 @@ kwaainet config --set public_name "MyNode@kwaai"
 | `kwaainet monitor stats\|alert` | P2P connection statistics and alerts |
 | `kwaainet update [--check]` | Check for new releases |
 | `kwaainet setup` | Initialize directories and default config |
+| `kwaainet setup --get-deps` | Download and install `p2pd` if missing |
 | `kwaainet uninstall [--yes] [--keep-data]` | Remove all KwaaiNet data, service, and binaries |
 | `kwaainet identity show` | Show node DID, Peer ID, trust tier, and credential summary |
 | `kwaainet identity import-vc <file>` | Import a Verifiable Credential from a JSON file |
