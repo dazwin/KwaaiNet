@@ -42,9 +42,32 @@ use crate::hf;
 
 // ── Entrypoint ────────────────────────────────────────────────────────────────
 
+/// Outcome of a `cmd_shard_serve` invocation.
+enum ShardServeExit {
+    /// User pressed Ctrl-C — stop serving entirely.
+    UserStop,
+    /// Rebalancer signalled that blocks should move — re-run serve with `--auto`.
+    Rebalance,
+}
+
 pub async fn run(args: ShardArgs) -> Result<()> {
     match args.action {
-        ShardAction::Serve(a) => cmd_shard_serve(a).await,
+        ShardAction::Serve(a) => {
+            // When --auto-rebalance is active we loop: after each rebalance
+            // signal we re-run cmd_shard_serve so pick_gap_blocks() re-queries
+            // the DHT and loads a fresh shard at the new block range.
+            loop {
+                match cmd_shard_serve(a.clone()).await? {
+                    ShardServeExit::UserStop => break,
+                    ShardServeExit::Rebalance => {
+                        print_info("Rebalancing — re-discovering gap and reloading shard…");
+                        // Next iteration will call pick_gap_blocks() fresh because
+                        // a.auto is true (--auto-rebalance implies --auto).
+                    }
+                }
+            }
+            Ok(())
+        }
         ShardAction::Run(a) => cmd_shard_run(a).await,
         ShardAction::Status => cmd_shard_status().await,
         ShardAction::Chain(a) => cmd_shard_chain(a).await,
@@ -77,7 +100,7 @@ pub async fn cmd_shard_download(args: ShardDownloadArgs) -> Result<()> {
 
 // ── serve ─────────────────────────────────────────────────────────────────────
 
-pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
+async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
     let cfg = KwaaiNetConfig::load_or_create()?;
 
     let target_blocks = args.blocks.unwrap_or(cfg.blocks) as usize;
@@ -91,7 +114,8 @@ pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
         let our_peer_id =
             PeerId::from_bytes(&hex::decode(&peer_id_hex)?).context("parse our peer ID")?;
         let total = cfg.model_total_blocks() as usize;
-        let prefix = cfg.model_dht_prefix.as_deref().unwrap_or("unknown");
+        let prefix_owned = cfg.effective_dht_prefix();
+        let prefix = prefix_owned.as_str();
         let bootstrap_peers: Vec<String> = if cfg.initial_peers.is_empty() {
             NetworkConfig::with_petals_bootstrap().bootstrap_peers
         } else {
@@ -129,6 +153,9 @@ pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
         (s, e)
     } else {
         // --start-block was explicitly provided; sync config so the DHT announcer matches.
+        // Safety: the outer condition is `args.auto || args.start_block.is_none()`, so this
+        // else branch is only reached when start_block is Some.
+        #[allow(clippy::unnecessary_unwrap)]
         let s = args.start_block.unwrap() as usize;
         let e = s + target_blocks;
         let mut updated = cfg.clone();
@@ -207,10 +234,12 @@ pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
     let client = match P2PClient::connect(&daemon_addr).await {
         Ok(c) => c,
         Err(_) => {
-            print_error("Cannot connect to the running KwaaiNet node.");
-            print_info("Start the node first: kwaainet start --daemon");
+            print_error("Cannot connect to the KwaaiNet node — is it running?");
+            print_info("Start it:     kwaainet start --daemon");
+            print_info("Check status: kwaainet status");
+            print_info("View logs:    kwaainet logs --follow");
             print_separator();
-            return Ok(());
+            bail!("KwaaiNet node is not running");
         }
     };
 
@@ -252,23 +281,302 @@ pub async fn cmd_shard_serve(args: ShardServeArgs) -> Result<()> {
         }
     });
 
-    // Wait for Ctrl-C
-    tokio::signal::ctrl_c().await.context("ctrl-c handler")?;
+    // ── Rebalancer task ───────────────────────────────────────────────────────
+    // Spawn a background task that periodically checks DHT coverage and signals
+    // the main wait loop to exit with Rebalance when a block move is warranted.
+    // When --auto-rebalance is not requested we use a never-resolving future so
+    // tokio::select! compiles with the same shape in both branches.
+
+    let cfg_rb = KwaaiNetConfig::load_or_create()?;
+    let do_rebalance = args.auto_rebalance && args.auto;
+    let interval_secs = cfg_rb.rebalance_interval_secs;
+    let min_redundancy = cfg_rb.rebalance_min_redundancy;
+    let total_blocks_rb = cfg_rb.model_total_blocks() as usize;
+    let target_blocks_rb = args.blocks.unwrap_or(cfg_rb.blocks) as usize;
+    let dht_prefix_rb = cfg_rb.effective_dht_prefix();
+    let bootstrap_peers_rb: Vec<String> = if cfg_rb.initial_peers.is_empty() {
+        NetworkConfig::with_petals_bootstrap().bootstrap_peers
+    } else {
+        cfg_rb.initial_peers.clone()
+    };
+    let daemon_addr_rb = daemon_socket();
+
+    // oneshot used by the rebalancer to signal the main loop.
+    let rebalance_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+        if do_rebalance {
+            let (rebalance_tx, rebalance_rx) = tokio::sync::oneshot::channel::<()>();
+
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs.max(10)));
+                // Skip the first (immediate) tick — we just loaded the shard.
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+
+                    // Connect to p2pd to identify ourselves and query DHT.
+                    let mut c = match P2PClient::connect(&daemon_addr_rb).await {
+                        Ok(c) => c,
+                        Err(_) => {
+                            tracing::warn!("Rebalancer: cannot connect to p2pd, skipping check");
+                            continue;
+                        }
+                    };
+                    let hex = match c.identify().await {
+                        Ok(h) => h,
+                        Err(_) => {
+                            tracing::warn!("Rebalancer: identify failed, skipping check");
+                            continue;
+                        }
+                    };
+                    let pid = match hex::decode(&hex)
+                        .ok()
+                        .and_then(|b| PeerId::from_bytes(&b).ok())
+                    {
+                        Some(p) => p,
+                        None => {
+                            tracing::warn!("Rebalancer: could not parse peer ID, skipping");
+                            continue;
+                        }
+                    };
+
+                    let chain = discover_chain(
+                        &mut c,
+                        &pid,
+                        &dht_prefix_rb,
+                        total_blocks_rb,
+                        &bootstrap_peers_rb,
+                    )
+                    .await;
+
+                    if crate::rebalancer::check_rebalance(
+                        &chain,
+                        &pid,
+                        start_block,
+                        end_block,
+                        total_blocks_rb,
+                        target_blocks_rb,
+                        min_redundancy,
+                    )
+                    .is_some()
+                    {
+                        print_info(&format!(
+                            "Rebalance: blocks [{start_block},{end_block}) have \
+                             ≥{min_redundancy} other node(s); gap detected — moving."
+                        ));
+                        let _ = rebalance_tx.send(());
+                        break;
+                    }
+                    print_info("Rebalance check: coverage OK, no move needed.");
+                }
+            });
+
+            Box::pin(async move {
+                let _ = rebalance_rx.await;
+            })
+        } else {
+            Box::pin(futures::future::pending::<()>())
+        };
+
+    // ── Wait: Ctrl-C or rebalance signal ─────────────────────────────────────
+    let exit = tokio::select! {
+        res = tokio::signal::ctrl_c() => {
+            res.context("ctrl-c handler")?;
+            ShardServeExit::UserStop
+        }
+        _ = rebalance_fut => {
+            ShardServeExit::Rebalance
+        }
+    };
+
     let _ = std::fs::remove_file(local_server_port_file());
     println!();
-    print_info("Shard server stopped.");
+    match exit {
+        ShardServeExit::UserStop => print_info("Shard server stopped."),
+        ShardServeExit::Rebalance => print_info("Shard server stopping for rebalance."),
+    }
+    Ok(exit)
+}
+
+// ── run --local (in-process, no networking) ───────────────────────────────────
+
+/// Load the model in-process and run inference without any P2P or TCP overhead.
+/// Used by `shard run --local` for single-machine testing.
+async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
+    use kwaai_inference::tokenizer::Tokenizer as _;
+
+    let cfg = KwaaiNetConfig::load_or_create()?;
+    let model_ref = args.model.as_deref().unwrap_or(&cfg.model);
+
+    print_box_header("🔗 KwaaiNet Local Inference");
+    println!("  Model:  {}", model_ref);
+    println!("  Prompt: {:?}", args.prompt);
+    println!("  Device: {}", if args.no_gpu { "CPU" } else { "auto" });
+    println!();
+
+    // Resolve model path
+    let model_dir = if let Some(p) = &args.model_path {
+        p.clone()
+    } else {
+        hf::resolve_snapshot(model_ref)?
+    };
+
+    // Load tokenizer
+    let tokenizer_path = model_dir.join("tokenizer.json");
+    let tokenizer = kwaai_inference::tokenizer::BpeTokenizer::from_file(&tokenizer_path)
+        .context("Failed to load tokenizer")?;
+
+    // Apply chat template
+    let formatted_prompt = if tokenizer.token_to_id("<|start_header_id|>").is_some() {
+        format!(
+            "<|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            args.prompt
+        )
+    } else if tokenizer.token_to_id("<|im_start|>").is_some() {
+        format!(
+            "<|im_start|>user\n{}\n<|im_end|>\n<|im_start|>assistant\n",
+            args.prompt
+        )
+    } else {
+        args.prompt.clone()
+    };
+
+    let mut token_ids: Vec<u32> = tokenizer
+        .encode(&formatted_prompt)
+        .context("Failed to encode prompt")?;
+    if let Some(bos) = tokenizer.bos_token_id() {
+        token_ids.insert(0, bos);
+    }
+    let eos_id = tokenizer.eos_token_id().unwrap_or(2);
+
+    // Pick device
+    let device_type = if args.no_gpu {
+        kwaai_inference::DeviceType::Cpu
+    } else {
+        kwaai_inference::DeviceType::detect_best()
+    };
+    let device = device_type
+        .to_candle_device()
+        .context("Failed to create compute device")?;
+
+    // Load shard covering all blocks
+    let config_path = model_dir.join("config.json");
+    let total_blocks = args
+        .total_blocks
+        .unwrap_or_else(|| cfg.model_total_blocks() as usize);
+
+    // Discover safetensors shards
+    let paths: Vec<std::path::PathBuf> = {
+        let mut p: Vec<_> = std::fs::read_dir(&model_dir)
+            .context("read model dir")?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().and_then(|e| e.to_str()) == Some("safetensors")
+            })
+            .collect();
+        p.sort();
+        p
+    };
+    if paths.is_empty() {
+        bail!(
+            "No .safetensors files found in {}",
+            model_dir.display()
+        );
+    }
+
+    print_info(&format!("Loading {} shard(s) on {:?}…", paths.len(), device_type));
+
+    let path_refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+    let shard = Arc::new(
+        TransformerShard::load(&path_refs, &config_path, &device, 0, total_blocks)
+            .context("Failed to load model")?,
+    );
+
+    print_success(&format!("Model loaded ({} blocks)", total_blocks));
+    println!("  Input tokens: {}", token_ids.len());
+    println!();
+
+    let session_id: u64 = args.session_id.unwrap_or_else(rand_session_id);
+    let max_tokens = args.max_tokens;
+    let temperature = args.temperature;
+    let top_k = args.top_k;
+    let top_p = args.top_p;
+
+    let mut generated_ids: Vec<u32> = Vec::new();
+    let mut seq_pos: usize = 0;
+    let mut current_ids = token_ids.clone();
+
+    print!("  Assistant: ");
+    use std::io::Write as _;
+    std::io::stdout().flush().ok();
+
+    loop {
+        // Run full forward pass in-process
+        let logits = tokio::task::spawn_blocking({
+            let shard = shard.clone();
+            let ids = current_ids.clone();
+            let sp = seq_pos;
+            move || shard.forward_full(session_id, &ids, sp)
+        })
+        .await
+        .context("join forward_full")?
+        .context("forward_full")?;
+
+        // logits shape: [1, seq_len, vocab] or [vocab]
+        let last_logits = {
+            let dims = logits.dims();
+            if dims.len() == 3 && dims[1] > 1 {
+                use candle_core::IndexOp as _;
+                logits.i((0, dims[1] - 1, ..))?
+            } else {
+                logits.flatten_all()?
+            }
+        };
+
+        // Move logits to CPU for sampling
+        let last_logits = last_logits.to_device(&candle_core::Device::Cpu)?;
+        let next_id = sample_token(&last_logits, temperature, top_k, top_p)? as u32;
+
+        if let Ok(piece) = tokenizer.decode(&[next_id]) {
+            print!("{}", piece);
+            std::io::stdout().flush().ok();
+        }
+
+        generated_ids.push(next_id);
+        seq_pos += current_ids.len();
+
+        if next_id == eos_id || generated_ids.len() >= max_tokens {
+            break;
+        }
+
+        current_ids = vec![next_id];
+    }
+
+    println!();
+    println!();
+    print_success(&format!("Generated {} token(s)", generated_ids.len()));
+    print_separator();
     Ok(())
 }
 
 // ── run ───────────────────────────────────────────────────────────────────────
 
 pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
+    // --local: bypass all networking, load model in-process and infer directly.
+    if args.local {
+        return cmd_shard_run_local(args).await;
+    }
+
     let cfg = KwaaiNetConfig::load_or_create()?;
 
     let model_ref = args.model.as_deref().unwrap_or(&cfg.model);
-    let dht_prefix = match &cfg.model_dht_prefix {
-        Some(p) => p.clone(),
-        None => derive_dht_prefix(model_ref),
+    // If a model was passed on the CLI that differs from config, build a temporary
+    // config with that model name so effective_dht_prefix() derives the right key.
+    let dht_prefix = if args.model.is_some() && args.model.as_deref() != Some(&cfg.model) {
+        let base = model_ref.split('/').next_back().unwrap_or(model_ref);
+        base.replace('.', "-")
+    } else {
+        cfg.effective_dht_prefix()
     };
     let total_blocks = args
         .total_blocks
@@ -286,10 +594,12 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     let mut client = match P2PClient::connect(&daemon_addr).await {
         Ok(c) => c,
         Err(_) => {
-            print_error("Cannot connect to the running KwaaiNet node.");
-            print_info("Start the node first: kwaainet start --daemon");
+            print_error("Cannot connect to the KwaaiNet node — is it running?");
+            print_info("Start it:     kwaainet start --daemon");
+            print_info("Check status: kwaainet status");
+            print_info("View logs:    kwaainet logs --follow");
             print_separator();
-            return Ok(());
+            bail!("KwaaiNet node is not running");
         }
     };
 
@@ -338,9 +648,7 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
         println!("no nodes found");
         println!();
         print_warning("No block servers found in DHT for this model.");
-        print_info(&format!(
-            "Start serving with: kwaainet shard serve --model <path>"
-        ));
+        print_info("Start serving with: kwaainet shard serve --model <path>");
         print_separator();
         return Ok(());
     }
@@ -383,9 +691,27 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
 
     use kwaai_inference::tokenizer::Tokenizer as _;
 
-    // Tokenize prompt
+    // Apply chat template based on tokenizer vocab, then tokenize.
+    // Instruct models require special header tokens around the user turn.
+    let formatted_prompt = if tokenizer.token_to_id("<|start_header_id|>").is_some() {
+        // Llama-3 instruct format
+        format!(
+            "<|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            args.prompt
+        )
+    } else if tokenizer.token_to_id("<|im_start|>").is_some() {
+        // ChatML format (Mistral-Instruct, Qwen, etc.)
+        format!(
+            "<|im_start|>user\n{}\n<|im_end|>\n<|im_start|>assistant\n",
+            args.prompt
+        )
+    } else {
+        // Base models / Llama-2: raw prompt
+        args.prompt.clone()
+    };
+
     let mut token_ids: Vec<u32> = tokenizer
-        .encode(&args.prompt)
+        .encode(&formatted_prompt)
         .context("Failed to encode prompt")?;
 
     // Prepend BOS token if available
@@ -524,10 +850,8 @@ pub async fn cmd_shard_chain(args: ShardChainArgs) -> Result<()> {
 
     let dht_prefix = args
         .dht_prefix
-        .as_deref()
-        .or(cfg.model_dht_prefix.as_deref())
-        .map(str::to_string)
-        .unwrap_or_else(|| derive_dht_prefix(&cfg.model));
+        .clone()
+        .unwrap_or_else(|| cfg.effective_dht_prefix());
 
     let total_blocks = args.total_blocks;
 
@@ -540,10 +864,12 @@ pub async fn cmd_shard_chain(args: ShardChainArgs) -> Result<()> {
     let mut client = match P2PClient::connect(&daemon_addr).await {
         Ok(c) => c,
         Err(_) => {
-            print_error("Cannot connect to the running KwaaiNet node.");
-            print_info("Start the node first: kwaainet start --daemon");
+            print_error("Cannot connect to the KwaaiNet node — is it running?");
+            print_info("Start it:     kwaainet start --daemon");
+            print_info("Check status: kwaainet status");
+            print_info("View logs:    kwaainet logs --follow");
             print_separator();
-            return Ok(());
+            bail!("KwaaiNet node is not running");
         }
     };
 
@@ -576,9 +902,7 @@ pub async fn cmd_shard_chain(args: ShardChainArgs) -> Result<()> {
     // Build coverage bitmap
     let mut covered = vec![false; total_blocks];
     for entry in &chain {
-        for b in entry.start_block..entry.end_block.min(total_blocks) {
-            covered[b] = true;
-        }
+        covered[entry.start_block..entry.end_block.min(total_blocks)].fill(true);
     }
     let n_covered = covered.iter().filter(|&&c| c).count();
 
@@ -589,8 +913,8 @@ pub async fn cmd_shard_chain(args: ShardChainArgs) -> Result<()> {
         total_blocks
     );
     println!(
-        "  {:<6} {:<6} {:<18} {}",
-        "START", "END", "PEER ID (prefix)", "NAME"
+        "  {:<6} {:<6} {:<18} NAME",
+        "START", "END", "PEER ID (prefix)"
     );
     println!("  {}", "─".repeat(60));
     for entry in &chain {
@@ -611,8 +935,8 @@ pub async fn cmd_shard_chain(args: ShardChainArgs) -> Result<()> {
 
     // Coverage bar
     print!("  Blocks: [");
-    for b in 0..total_blocks {
-        print!("{}", if covered[b] { "█" } else { "░" });
+    for &c in &covered {
+        print!("{}", if c { "█" } else { "░" });
     }
     println!("]");
     println!();
@@ -744,9 +1068,7 @@ async fn pick_gap_blocks(
 
     let mut covered = vec![false; total_blocks];
     for e in &chain {
-        for b in e.start_block..e.end_block.min(total_blocks) {
-            covered[b] = true;
-        }
+        covered[e.start_block..e.end_block.min(total_blocks)].fill(true);
     }
 
     let start = covered.iter().position(|&c| !c).ok_or_else(|| {
@@ -928,7 +1250,7 @@ pub async fn forward_through_chain(
         let mut succeeded = false;
         for candidate in &candidates {
             // Self-bypass: avoid libp2p "dial to self" by using the local TCP server.
-            let is_self = our_peer_id.map_or(false, |id| id == &candidate.peer_id);
+            let is_self = our_peer_id == Some(&candidate.peer_id);
             let result = if is_self {
                 match local_port {
                     Some(port) => local_inference_call(port, &request).await,
@@ -1100,22 +1422,21 @@ fn block_dht_id(prefix: &str, block: usize) -> Vec<u8> {
 /// (e.g. when running multiple nodes on the same machine).
 pub fn daemon_socket() -> String {
     #[cfg(unix)]
-    {
+    let addr = {
         let sock =
             std::env::var("KWAAINET_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
-        return format!("/unix/{}", sock);
-    }
+        format!("/unix/{}", sock)
+    };
     #[cfg(not(unix))]
-    return "/ip4/127.0.0.1/tcp/5005".to_string();
+    let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
+    addr
 }
 
 /// Check whether chain entries cover every block in `0..total_blocks`.
 fn coverage_check(chain: &[BlockServerEntry], total_blocks: usize) -> bool {
     let mut covered = vec![false; total_blocks];
     for entry in chain {
-        for b in entry.start_block..entry.end_block.min(total_blocks) {
-            covered[b] = true;
-        }
+        covered[entry.start_block..entry.end_block.min(total_blocks)].fill(true);
     }
     covered.iter().all(|&c| c)
 }
@@ -1234,9 +1555,3 @@ fn rand_session_id() -> u64 {
     x ^ (x >> 31)
 }
 
-/// Derive a DHT prefix from a model name/path using Petals conventions.
-/// e.g. `"meta-llama/Llama-3.1-8B-Instruct"` → `"Llama-3-1-8B-Instruct"`.
-fn derive_dht_prefix(model: &str) -> String {
-    let base = model.split('/').last().unwrap_or(model);
-    base.replace('.', "-")
-}

@@ -244,6 +244,13 @@ impl DaemonBuilder {
         // Redirect stderr for logging
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
+        // Suppress console window on Windows
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
         debug!("Spawning daemon: {:?}", cmd);
 
         let child = cmd.spawn().map_err(|e| {

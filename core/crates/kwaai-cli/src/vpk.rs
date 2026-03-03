@@ -187,8 +187,10 @@ async fn discover() -> Result<()> {
     let mut client = match P2PClient::connect(&daemon_addr).await {
         Ok(c) => c,
         Err(_) => {
-            print_error("Cannot connect to the running KwaaiNet node.");
-            print_info("Start the node first: kwaainet start --daemon");
+            print_error("Cannot connect to the KwaaiNet node — is it running?");
+            print_info("Start it:     kwaainet start --daemon");
+            print_info("Check status: kwaainet status");
+            print_info("View logs:    kwaainet logs --follow");
             print_separator();
             return Ok(());
         }

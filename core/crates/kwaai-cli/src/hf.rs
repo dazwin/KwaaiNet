@@ -207,16 +207,18 @@ pub async fn download(model_id: &str, hf_token: Option<&str>) -> Result<PathBuf>
         .get(&api_url)
         .send()
         .await
-        .context("Failed to reach huggingface.co — check your internet connection")?;
+        .context("Failed to reach HuggingFace Hub — check your internet connection")?;
 
     match resp.status().as_u16() {
         200 => {}
         401 | 403 => bail!(
-            "Model '{}' requires authentication.\n\
-             Set the HF_TOKEN environment variable or pass --hf-token.",
+            "Model '{}' requires authentication. Pass --hf-token or set HF_TOKEN env var.",
             model_id
         ),
-        404 => bail!("Model '{}' not found on HuggingFace Hub.", model_id),
+        404 => bail!(
+            "Model '{}' not found on HuggingFace Hub. Check the model ID spelling.",
+            model_id
+        ),
         s => bail!("HuggingFace API returned HTTP {}", s),
     }
 

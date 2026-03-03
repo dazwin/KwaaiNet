@@ -14,6 +14,7 @@ mod map;
 mod monitor;
 mod node;
 mod ollama;
+mod rebalancer;
 mod service;
 mod setup;
 mod shard_api;
@@ -44,6 +45,17 @@ async fn main() -> Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    // Spawn a background update check that runs concurrently with the command.
+    // Uses a 24-hour on-disk cache so it only hits the network once per day.
+    // Skipped for `update` (redundant) and `run-node` (internal daemon process).
+    let skip_update_hint = matches!(
+        cli.command,
+        Command::Update(_) | Command::RunNode
+    );
+    let update_task = (!skip_update_hint).then(|| {
+        tokio::spawn(async { updater::UpdateChecker::new().check(false).await })
+    });
 
     match cli.command {
         // -------------------------------------------------------------------
@@ -125,7 +137,13 @@ async fn main() -> Result<()> {
 
                             match map::pick_best_model(&local_models, &map_state, &cfg.model) {
                                 Some(choice) => {
-                                    if choice.ollama_ref != cfg.model {
+                                    // Only switch the model name when the current one is an
+                                    // Ollama short ref (no '/').  If the user has a HuggingFace
+                                    // repo path (contains '/') such as
+                                    // `unsloth/Llama-3.1-8B-Instruct`, keep it — the Ollama map
+                                    // selection must not clobber an explicit HF model.
+                                    let is_hf_model = cfg.model.contains('/');
+                                    if !is_hf_model && choice.ollama_ref != cfg.model {
                                         print_info(&format!(
                                             "Switching model  {}  →  {}",
                                             cfg.model, choice.ollama_ref
@@ -286,7 +304,7 @@ async fn main() -> Result<()> {
             let log_path = config::log_file();
 
             if !log_path.exists() {
-                print_warning("No log file found yet. Start the node first.");
+                print_warning("No log file found. Start the node first: kwaainet start --daemon");
                 return Ok(());
             }
 
@@ -550,7 +568,14 @@ async fn main() -> Result<()> {
                     if args.check {
                         print_info("Run 'kwaainet update' (without --check) to install");
                     } else {
-                        print_info("Download the latest release from the URL above to update");
+                        println!("  Installing v{}…", info.version);
+                        println!();
+                        checker.install_update().await?;
+                        println!();
+                        print_success(&format!(
+                            "Updated to v{}! Restart any running daemon with `kwaainet restart`.",
+                            info.version
+                        ));
                     }
                 }
             }
@@ -605,9 +630,7 @@ async fn main() -> Result<()> {
                     ));
                 }
             } else {
-                print_info(&format!(
-                    "Apply recommended: kwaainet calibrate --apply recommended"
-                ));
+                print_info("Apply recommended: kwaainet calibrate --apply recommended");
             }
         }
 
@@ -992,6 +1015,24 @@ async fn main() -> Result<()> {
                 print_info("Start the node with: kwaainet start --daemon");
                 print_separator();
             }
+        }
+    }
+
+    // Print a one-line update hint if a newer version was found.
+    // Wait up to 2 s — for long-running commands the task finished long ago
+    // (instant cache hit); for fast commands 2 s is a graceful upper bound.
+    if let Some(task) = update_task {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            task,
+        )
+        .await;
+        if let Ok(Ok(Ok(Some(info)))) = result {
+            println!();
+            print_info(&format!(
+                "kwaainet v{} is available — run 'kwaainet update' to upgrade",
+                info.version
+            ));
         }
     }
 

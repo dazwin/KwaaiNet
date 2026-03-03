@@ -6,8 +6,51 @@ use clap::{Args, Parser, Subcommand};
 #[command(
     name = "kwaainet",
     about = "KwaaiNet – Distributed AI node CLI",
-    long_about = None,
-    version,
+    long_about = "KwaaiNet — Sovereign AI Infrastructure
+
+─── Install & first run ──────────────────────────────────────────────
+  kwaainet setup                         create config dirs and identity
+  kwaainet setup --get-deps              download p2pd (if not bundled)
+  kwaainet benchmark                     measure GPU/CPU throughput
+
+─── Join the network ─────────────────────────────────────────────────
+  kwaainet config set public_name \"alice-m4\"   shown on map.kwaai.ai
+  kwaainet start --daemon                       start node in background
+  kwaainet status                               verify node is online
+  kwaainet logs --follow                        tail the daemon log
+
+─── Configuration ────────────────────────────────────────────────────
+  kwaainet config                        show current config
+  kwaainet config set KEY VALUE          update a value
+  kwaainet config set blocks 8           transformer blocks to host
+  kwaainet config set use_gpu true       enable GPU acceleration
+
+─── Direct vs Relay connections ──────────────────────────────────────
+  By default nodes connect via relay (no port forwarding required).
+  For direct connections (lower latency, better throughput):
+    kwaainet config set public_ip <YOUR_PUBLIC_IP>
+    kwaainet config set announce_addr /ip4/<IP>/tcp/<PORT>
+    • Forward the chosen TCP port in your router
+    • Verify: kwaainet status  →  look for \"using_relay: false\"
+
+─── Distributed inference ────────────────────────────────────────────
+  # Single machine — full model
+  kwaainet shard serve --blocks 32
+  kwaainet shard run \"What is the capital of France?\"
+
+  # Two machines — split the model
+  #  Machine A                             Machine B
+  shard serve --blocks 28                  shard serve --start-block 28 --blocks 4
+  shard chain --total-blocks 32            # verify full coverage before running
+  shard run \"Hello\"                        # coordinate inference across the chain
+
+─── OpenAI-compatible API ────────────────────────────────────────────
+  kwaainet shard api --port 8080
+  curl http://localhost:8080/v1/chat/completions \\
+    -d '{\"model\":\"default\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'
+
+Learn more: https://github.com/Kwaai-AI-Lab/KwaaiNet",
+    version
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -83,6 +126,16 @@ pub enum Command {
     Uninstall(UninstallArgs),
 
     /// Distributed transformer block sharding
+    #[command(long_about = "Distributed transformer block sharding (Petals-style)
+
+Each machine loads a slice of the model and registers an RPC handler.
+A coordinator discovers the chain via DHT and orchestrates inference hop-by-hop.
+
+  shard serve     Load and serve a range of transformer blocks (run on each node)
+  shard run       Coordinate inference across all serving nodes
+  shard chain     Show block coverage across all online peers
+  shard api       OpenAI-compatible HTTP server for distributed inference
+  shard download  Download a HuggingFace SafeTensors model (no huggingface-cli needed)")]
     Shard(ShardArgs),
 
     /// Internal: run the node in the foreground (used by daemon mode)
@@ -166,9 +219,17 @@ pub struct ConfigArgs {
 pub enum ConfigAction {
     /// Show current configuration (default when no subcommand given)
     Show,
-    /// Set a configuration key: kwaainet config set KEY VALUE
+    /// Set a config value.
+    ///
+    /// Valid keys:
+    ///   model, blocks, start_block, port, use_gpu, log_level,
+    ///   public_name, public_ip, announce_addr, no_relay,
+    ///   vpk_enabled, vpk_mode, vpk_endpoint, vpk_local_port,
+    ///   auto_rebalance, rebalance_interval_secs, rebalance_min_redundancy
+    ///
+    /// Example: kwaainet config set public_name "alice-m4"
     Set {
-        /// Config key (model, blocks, port, use_gpu, log_level, public_name, …)
+        /// Config key to set
         key: String,
         /// New value
         value: String,
@@ -432,7 +493,7 @@ pub enum ShardAction {
     Download(ShardDownloadArgs),
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct ShardServeArgs {
     /// Path to the model directory (config.json + *.safetensors + tokenizer.json).
     /// Defaults to the HuggingFace cache for the model in config.yaml.
@@ -455,6 +516,12 @@ pub struct ShardServeArgs {
     /// Uses --blocks (or config.blocks) as the target count.
     #[arg(long)]
     pub auto: bool,
+
+    /// Periodically check DHT coverage and move blocks to fill gaps when our current
+    /// range is already well-covered by other nodes. Requires --auto.
+    /// Interval and redundancy threshold are set via `kwaainet config set`.
+    #[arg(long)]
+    pub auto_rebalance: bool,
 }
 
 #[derive(Args)]
@@ -498,6 +565,15 @@ pub struct ShardRunArgs {
     /// Path to model dir for tokenizer (overrides HF cache lookup)
     #[arg(long, value_name = "PATH")]
     pub model_path: Option<std::path::PathBuf>,
+
+    /// Run inference entirely in-process — load model locally without `shard serve`.
+    /// Requires --model-path (or a cached HF snapshot). No P2P or TCP overhead.
+    #[arg(long)]
+    pub local: bool,
+
+    /// Disable GPU and use CPU only (applies when --local is set)
+    #[arg(long)]
+    pub no_gpu: bool,
 }
 
 #[derive(Args)]

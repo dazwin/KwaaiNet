@@ -98,7 +98,9 @@ struct DHTServerInfo {
     torch_dtype: String,
     using_relay: bool,
     cache_tokens_left: i64,
+    #[allow(dead_code)]
     next_pings: HashMap<String, f64>,
+    #[allow(dead_code)]
     adapters: Vec<String>,
     /// Compact JSON representations of the node's valid Verifiable Credentials.
     /// Empty when no credentials are stored; included in the DHT fields map
@@ -117,6 +119,7 @@ struct DHTServerInfo {
 }
 
 impl DHTServerInfo {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         start: i32,
         end: i32,
@@ -255,12 +258,6 @@ fn dht_id(raw_key: &str) -> Vec<u8> {
     Sha1::new().chain_update(&packed).finalize().to_vec()
 }
 
-/// Convert a model name to a Hivemind DHT prefix as a fallback.
-/// Prefer using the canonical prefix from the map API (config.model_dht_prefix).
-/// "unsloth/Llama-3.1-8B-Instruct" → "unsloth-Llama-3-1-8B-Instruct"
-fn dht_prefix_fallback(model: &str) -> String {
-    model.replace('.', "-").replace('/', "-")
-}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -483,10 +480,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
 
     // Use the canonical DHT prefix from the map (set during startup model selection).
     // Falls back to a computed prefix if the map wasn't consulted (e.g. --model override).
-    let prefix = config
-        .model_dht_prefix
-        .clone()
-        .unwrap_or_else(|| dht_prefix_fallback(&config.model));
+    let prefix = config.effective_dht_prefix();
     let repository = config.model_repository.clone().unwrap_or_else(|| {
         if config.model.contains('/') {
             format!("https://huggingface.co/{}", config.model)
@@ -632,6 +626,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
 // DHT announcement
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn announce(
     client: &mut kwaai_p2p_daemon::P2PClient,
     peer_id: PeerId,
@@ -883,7 +878,8 @@ async fn wait_for_bootstrap_peers(
 
                 // Log progress every 5 seconds
                 let elapsed = start.elapsed();
-                if elapsed.as_secs() % 5 == 0 && elapsed.as_millis() < POLL_INTERVAL_MS as u128 * 2
+                if elapsed.as_secs().is_multiple_of(5)
+                    && elapsed.as_millis() < POLL_INTERVAL_MS as u128 * 2
                 {
                     info!("   Waiting for bootstrap peers... ({:.0}s elapsed, {} total peers connected)",
                           elapsed.as_secs_f64(), peers.len());
@@ -982,18 +978,15 @@ async fn check_vpk_health(port: u16) -> Option<serde_json::Value> {
     resp.json::<serde_json::Value>().await.ok()
 }
 
+#[allow(dead_code)]
 fn find_free_port(preferred: u16) -> Option<u16> {
     if port_is_free(preferred) {
         return Some(preferred);
     }
-    for p in (preferred + 1)..=(preferred + 100) {
-        if port_is_free(p) {
-            return Some(p);
-        }
-    }
-    None
+    ((preferred + 1)..=(preferred + 100)).find(|&p| port_is_free(p))
 }
 
+#[allow(dead_code)]
 fn port_is_free(port: u16) -> bool {
     std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
 }

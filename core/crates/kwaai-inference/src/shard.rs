@@ -9,7 +9,7 @@
 //! * **Last node** (`end_block == num_total_blocks`): receives hidden states, runs its
 //!   blocks, applies the final RMSNorm + LM head, returns logits `[1, 1, vocab_size]`.
 //!
-//! KV-cache is managed per session (`session_id: u64`).  Sessions expire after 60 s of
+//! KV-cache is managed per session (`session_id: u64`).  Sessions expire after 600 s of
 //! inactivity; call [`TransformerShard::gc_sessions`] periodically.
 
 use crate::{
@@ -553,12 +553,12 @@ impl TransformerShard {
         debug!("Closed session {session_id}");
     }
 
-    /// Evict sessions that have been idle for more than 60 seconds.
+    /// Evict sessions that have been idle for more than 600 seconds.
     /// Call this periodically (e.g., every 30 s) from a background task.
     pub fn gc_sessions(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         let before = sessions.len();
-        sessions.retain(|_, s| s.last_access.elapsed().as_secs() < 60);
+        sessions.retain(|_, s| s.last_access.elapsed().as_secs() < 600);
         let evicted = before - sessions.len();
         if evicted > 0 {
             info!(

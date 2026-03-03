@@ -5,8 +5,8 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use std::path::PathBuf;
+use tracing::{debug, info};
 
 // ---------------------------------------------------------------------------
 // Directory helpers
@@ -111,6 +111,22 @@ pub struct KwaaiNetConfig {
     /// Local port for the VPK health-check and REST API (default: 7432).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vpk_local_port: Option<u16>,
+
+    // ── Block rebalancing ─────────────────────────────────────────────────────
+    /// Enable periodic block rebalancing (only active with `shard serve --auto`).
+    /// When true, the shard server periodically checks DHT coverage and moves
+    /// its blocks to fill gaps if its current range is well-covered by others.
+    #[serde(default)]
+    pub auto_rebalance: bool,
+
+    /// How often to check coverage and potentially rebalance (seconds).
+    #[serde(default = "default_rebalance_interval")]
+    pub rebalance_interval_secs: u64,
+
+    /// Minimum number of OTHER nodes that must cover our range before we will
+    /// consider moving. Prevents moving when we are the sole coverage.
+    #[serde(default = "default_rebalance_min_redundancy")]
+    pub rebalance_min_redundancy: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +264,12 @@ fn default_backoff_multiplier() -> f64 {
 fn default_jitter_factor() -> f64 {
     0.5
 }
+fn default_rebalance_interval() -> u64 {
+    300
+}
+fn default_rebalance_min_redundancy() -> usize {
+    2
+}
 
 impl Default for KwaaiNetConfig {
     fn default() -> Self {
@@ -275,6 +297,9 @@ impl Default for KwaaiNetConfig {
             vpk_mode: None,
             vpk_endpoint: None,
             vpk_local_port: None,
+            auto_rebalance: false,
+            rebalance_interval_secs: default_rebalance_interval(),
+            rebalance_min_redundancy: default_rebalance_min_redundancy(),
         }
     }
 }
@@ -344,6 +369,22 @@ impl KwaaiNetConfig {
         Ok(())
     }
 
+    /// Return the effective DHT prefix for this node's model.
+    ///
+    /// Uses the canonical prefix set by the map API when available.
+    /// Falls back to deriving it from the model name using Petals conventions:
+    /// `"org/Model-Name.1B"` → `"Model-Name-1B"` (basename only, dots to dashes).
+    ///
+    /// This is the single source of truth — both `node.rs` and `shard_cmd.rs`
+    /// call this so they always agree on the DHT key.
+    pub fn effective_dht_prefix(&self) -> String {
+        if let Some(ref p) = self.model_dht_prefix {
+            return p.clone();
+        }
+        let base = self.model.split('/').next_back().unwrap_or(&self.model);
+        base.replace('.', "-")
+    }
+
     /// Total transformer blocks in the full model.
     ///
     /// Reads `num_hidden_layers` from the model's `config.json` when the
@@ -388,7 +429,21 @@ impl KwaaiNetConfig {
                     .parse()
                     .map_err(|_| anyhow::anyhow!("start_block must be a non-negative integer"))?
             }
-            _ => anyhow::bail!("Unknown config key: {}", key),
+            "auto_rebalance" => self.auto_rebalance = parse_bool(value)?,
+            "rebalance_interval_secs" => {
+                self.rebalance_interval_secs = value.parse().map_err(|_| {
+                    anyhow::anyhow!("rebalance_interval_secs must be a positive integer")
+                })?
+            }
+            "rebalance_min_redundancy" => {
+                self.rebalance_min_redundancy = value.parse().map_err(|_| {
+                    anyhow::anyhow!("rebalance_min_redundancy must be a positive integer")
+                })?
+            }
+            _ => anyhow::bail!(
+                "Unknown config key '{}'. Run `kwaainet config set --help` to see valid keys.",
+                key
+            ),
         }
         self.save()
     }
