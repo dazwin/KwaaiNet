@@ -261,15 +261,7 @@ Install `cargo-release` once:
 cargo install cargo-release
 ```
 
-### 1. Dry-run locally (optional but recommended)
-
-```bash
-docker compose -f docker-compose.ci.yml run --rm publish-dry-run
-```
-
-This validates that every crate packages correctly against crates.io without uploading anything.
-
-### 2. Bump the version and tag
+### Bump the version and tag
 
 From the `core/` directory:
 
