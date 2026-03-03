@@ -129,7 +129,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                                 // Subkey
                                                                 if let Some(Value::String(
                                                                     ref subkey,
-                                                                )) = entry_data.get(0)
+                                                                )) = entry_data.first()
                                                                 {
                                                                     println!(
                                                                         "\n  📦 Subkey: {}",
@@ -158,7 +158,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                                                     // Petals format: [state, throughput, {field_map}]
                                                                                     println!("     Server Info (Petals format):");
 
-                                                                                    if let Some(Value::Integer(state)) = arr.get(0) {
+                                                                                    if let Some(Value::Integer(state)) = arr.first() {
                                                                                         let state_val = state.as_i64().unwrap_or(0);
                                                                                         let state_name = match state_val {
                                                                                             0 => "OFFLINE",
@@ -261,7 +261,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                                                 Value::Integer(
                                                                                     num_blocks,
                                                                                 ),
-                                                                            ) = arr.get(0)
+                                                                            ) = arr.first()
                                                                             {
                                                                                 println!("     Blocks: {}", num_blocks.as_i64().unwrap_or(0));
                                                                             }
@@ -287,7 +287,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                                                 Value::Integer(
                                                                                     state,
                                                                                 ),
-                                                                            ) = arr.get(0)
+                                                                            ) = arr.first()
                                                                             {
                                                                                 let state_name = match state.as_i64().unwrap_or(0) {
                                                                                     0 => "OFFLINE",

@@ -7,7 +7,7 @@
 //!
 //! Run with: cargo run --example quantization
 
-use candle_core::{DType, Device, Tensor};
+use candle_core::{Device, Tensor};
 use kwaai_compression::{BlockwiseQuantizer, CompressedData, Compressor};
 use std::error::Error;
 use std::time::Instant;

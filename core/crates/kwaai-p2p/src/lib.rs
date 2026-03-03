@@ -12,7 +12,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use kwaai_p2p::{KwaaiNetwork, NetworkConfig};
+//! use kwaai_p2p::{KwaaiNetwork, NetworkBehaviour, NetworkConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {

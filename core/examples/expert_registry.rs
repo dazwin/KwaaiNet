@@ -7,10 +7,10 @@
 //!
 //! Run with: cargo run --example expert_registry
 
-use candle_core::{DType, Device, Tensor};
+use candle_core::{Device, Tensor};
 use kwaai_distributed::{
     expert::{Expert, ExpertId, ExpertRegistry, LocalExpert},
-    moe::{DistributedMoE, ExpertRouter, MixtureOfExperts, MoEConfig, Routing, TopKRouter},
+    moe::{DistributedMoE, ExpertRouter, MixtureOfExperts, MoEConfig, TopKRouter},
     DistributedConfig,
 };
 use std::error::Error;

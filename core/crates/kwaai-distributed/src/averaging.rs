@@ -90,6 +90,7 @@ impl Default for AveragingConfig {
 /// 4. Average and apply
 pub struct DecentralizedAverager {
     /// Configuration
+    #[allow(dead_code)]
     config: AveragingConfig,
     /// Accumulated gradients
     accumulated: Vec<Tensor>,

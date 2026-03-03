@@ -34,9 +34,6 @@ pub use error::{DistributedError, DistributedResult};
 pub use expert::{Expert, ExpertId, ExpertRegistry};
 pub use moe::{ExpertRouter, MixtureOfExperts, Routing};
 
-use async_trait::async_trait;
-use candle_core::Tensor;
-
 /// Configuration for distributed operations
 #[derive(Debug, Clone)]
 pub struct DistributedConfig {

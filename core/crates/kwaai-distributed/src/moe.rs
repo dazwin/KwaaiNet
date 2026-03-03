@@ -63,6 +63,7 @@ pub struct TopKRouter {
     /// Total number of experts
     num_experts: usize,
     /// Auxiliary loss coefficient
+    #[allow(dead_code)]
     aux_loss_coef: f32,
 }
 
@@ -124,6 +125,7 @@ pub struct DistributedMoE {
     /// Expert registry
     registry: ExpertRegistry,
     /// Configuration
+    #[allow(dead_code)]
     config: MoEConfig,
 }
 

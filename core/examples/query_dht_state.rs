@@ -96,7 +96,7 @@ fn parse_server_info(value_bytes: &[u8]) -> Option<ServerInfo> {
             // Petals format: ExtType wrapping [state, throughput, {field_map}]
             match rmpv::decode::read_value(&mut &ext_data[..]) {
                 Ok(Value::Array(ref arr)) if arr.len() >= 3 => {
-                    let state_val = arr.get(0).and_then(|v| v.as_i64()).unwrap_or(0);
+                    let state_val = arr.first().and_then(|v| v.as_i64()).unwrap_or(0);
 
                     let state = match state_val {
                         0 => "offline",
@@ -174,7 +174,7 @@ fn parse_server_info(value_bytes: &[u8]) -> Option<ServerInfo> {
         }
         Ok(Value::Array(ref arr)) if arr.len() >= 10 => {
             // KwaaiNet array format: [state, throughput, start_block, end_block, ...]
-            let state_val = arr.get(0).and_then(|v| v.as_i64()).unwrap_or(0);
+            let state_val = arr.first().and_then(|v| v.as_i64()).unwrap_or(0);
             let state = match state_val {
                 0 => "offline",
                 1 => "joining",
@@ -262,7 +262,7 @@ async fn query_block(
                                 if let Value::Array(entry_data) = entry {
                                     if entry_data.len() >= 2 {
                                         // Get peer ID (subkey)
-                                        let peer_id = entry_data.get(0).and_then(|v| {
+                                        let peer_id = entry_data.first().and_then(|v| {
                                             if let Value::String(ref s) = v {
                                                 s.as_str().map(|s| s.to_string())
                                             } else {

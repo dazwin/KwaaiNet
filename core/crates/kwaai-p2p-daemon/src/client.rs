@@ -9,7 +9,7 @@ use crate::persistent::PersistentConnection;
 use crate::protocol::p2pd::{
     request, ConnectRequest, DisconnectRequest, PeerInfo, Request, Response, StreamOpenRequest,
 };
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BufMut, BytesMut};
 use prost::Message;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -98,7 +98,7 @@ impl P2PClient {
         } else if addr.starts_with("/unix/") {
             #[cfg(unix)]
             {
-                let socket_path = &addr[6..]; // Skip "/unix/"
+                let socket_path = addr.strip_prefix("/unix/").unwrap(); // starts_with checked above
 
                 loop {
                     match UnixStream::connect(socket_path).await {
@@ -478,9 +478,6 @@ impl P2PClient {
         peer_id: &[u8],
         protocols: Vec<String>,
     ) -> Result<tokio::net::TcpStream> {
-        use crate::protocol::p2pd::StreamInfo;
-        use prost::Message as _;
-
         let request = Request {
             r#type: request::Type::StreamOpen as i32,
             connect: None,
@@ -547,7 +544,7 @@ impl P2PClient {
         // Connect to the daemon's forwarded stream
         let stream = tokio::net::TcpStream::connect(socket_addr)
             .await
-            .map_err(|e| Error::Io(e))?;
+            .map_err(Error::Io)?;
 
         debug!("Connected to daemon stream");
         Ok(stream)
@@ -612,8 +609,8 @@ impl P2PClient {
         frame.put_slice(len_bytes);
         frame.put_slice(&buf);
 
-        writer.write_all(&frame).await.map_err(|e| Error::Io(e))?;
-        writer.flush().await.map_err(|e| Error::Io(e))?;
+        writer.write_all(&frame).await.map_err(Error::Io)?;
+        writer.flush().await.map_err(Error::Io)?;
 
         // Read OK response
         let response_bytes = Self::read_varint_framed_static(&mut reader).await?;
@@ -643,10 +640,7 @@ impl P2PClient {
         let mut byte = [0u8; 1];
 
         for _ in 0..10 {
-            reader
-                .read_exact(&mut byte)
-                .await
-                .map_err(|e| Error::Io(e))?;
+            reader.read_exact(&mut byte).await.map_err(Error::Io)?;
             len_bytes.push(byte[0]);
             if byte[0] & 0x80 == 0 {
                 break;
@@ -658,10 +652,7 @@ impl P2PClient {
 
         // Read message payload
         let mut payload = vec![0u8; len as usize];
-        reader
-            .read_exact(&mut payload)
-            .await
-            .map_err(|e| Error::Io(e))?;
+        reader.read_exact(&mut payload).await.map_err(Error::Io)?;
 
         Ok(payload)
     }
@@ -718,6 +709,7 @@ impl P2PClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Buf;
 
     #[test]
     fn test_frame_encoding() {

@@ -15,9 +15,10 @@ use prost::Message;
 // ============================================================================
 
 /// Result type for DHT find operations
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(i32)]
 pub enum ResultType {
+    #[default]
     NotFound = 0,
     FoundRegular = 1,
     FoundDictionary = 2,
@@ -45,12 +46,6 @@ impl TryFrom<i32> for ResultType {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         Self::from_i32(value).ok_or(())
-    }
-}
-
-impl Default for ResultType {
-    fn default() -> Self {
-        Self::NotFound
     }
 }
 

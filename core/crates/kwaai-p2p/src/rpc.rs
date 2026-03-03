@@ -70,8 +70,7 @@ impl Codec for HivemindCodec {
 
         if marker == 0x01 {
             // Error marker
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 std::str::from_utf8(payload).unwrap_or("Unknown error"),
             ));
         }

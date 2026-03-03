@@ -11,6 +11,7 @@ use tokio::process::{Child, Command};
 use tracing::{debug, info, warn};
 
 /// Configuration builder for the p2p daemon
+#[derive(Default)]
 pub struct DaemonBuilder {
     binary_path: Option<PathBuf>,
     listen_addr: Option<String>,
@@ -27,26 +28,6 @@ pub struct DaemonBuilder {
     /// Path to a protobuf-encoded Ed25519 private key file (`-id` flag).
     /// When set, p2pd uses this key so the PeerId is stable across restarts.
     identity_key_path: Option<PathBuf>,
-}
-
-impl Default for DaemonBuilder {
-    fn default() -> Self {
-        Self {
-            binary_path: None,
-            listen_addr: None,
-            bootstrap_peers: Vec::new(),
-            dht: false,
-            relay: false,
-            auto_relay: false,
-            auto_nat: false,
-            nat_portmap: false,
-            host_addrs: Vec::new(),
-            announce_addrs: Vec::new(),
-            metrics: false,
-            metrics_addr: None,
-            identity_key_path: None,
-        }
-    }
 }
 
 impl DaemonBuilder {
@@ -193,8 +174,7 @@ impl DaemonBuilder {
 
         // Clean up stale Unix socket if it exists
         #[cfg(unix)]
-        if listen_addr.starts_with("/unix/") {
-            let socket_path = &listen_addr[6..]; // Skip "/unix/"
+        if let Some(socket_path) = listen_addr.strip_prefix("/unix/") {
             if std::path::Path::new(socket_path).exists() {
                 debug!("Removing stale Unix socket: {}", socket_path);
                 let _ = std::fs::remove_file(socket_path);

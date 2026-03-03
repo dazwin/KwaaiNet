@@ -131,20 +131,15 @@ impl Default for ModelConfig {
 }
 
 /// Device type for inference
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeviceType {
     /// CPU inference
+    #[default]
     Cpu,
     /// CUDA GPU inference
     Cuda(usize),
     /// Metal GPU inference (Apple Silicon)
     Metal(usize),
-}
-
-impl Default for DeviceType {
-    fn default() -> Self {
-        Self::Cpu
-    }
 }
 
 impl DeviceType {

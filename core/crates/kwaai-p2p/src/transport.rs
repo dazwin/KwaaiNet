@@ -5,20 +5,15 @@
 //! - WebRTC for browser environments (WASM)
 
 /// Transport type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum TransportType {
+    #[default]
     /// TCP transport for native applications
     Tcp,
     /// WebRTC transport for browsers
     WebRTC,
     /// QUIC transport (experimental)
     Quic,
-}
-
-impl Default for TransportType {
-    fn default() -> Self {
-        Self::Tcp
-    }
 }
 
 /// Transport configuration

@@ -1,6 +1,6 @@
 //! Expert management for Mixture of Experts
 
-use crate::error::{DistributedError, DistributedResult};
+use crate::error::DistributedResult;
 use async_trait::async_trait;
 use candle_core::Tensor;
 use serde::{Deserialize, Serialize};

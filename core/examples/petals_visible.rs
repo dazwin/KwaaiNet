@@ -14,27 +14,19 @@
 //! After running, check map.petals.dev to see if your node appears.
 
 use kwaai_hivemind_dht::{
-    codec::{DHTRequest, DHTResponse},
-    protocol::{
-        FindResponse, FindResult, NodeInfo, PingRequest, PingResponse, RequestAuthInfo,
-        ResponseAuthInfo, ResultType, StoreRequest, StoreResponse,
-    },
+    codec::DHTRequest,
+    protocol::{NodeInfo, RequestAuthInfo, StoreRequest},
     value::get_dht_time,
     DHTStorage,
 };
 use kwaai_p2p::{hivemind::ServerInfo, NetworkConfig};
 use kwaai_p2p_daemon::{stream, P2PDaemon};
 use libp2p::PeerId;
-use prost::Message;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::{error::Error, sync::Arc, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-    sync::RwLock,
-};
+use tokio::{io::AsyncWriteExt, net::TcpListener, sync::RwLock};
 use tracing::{debug, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -254,15 +246,16 @@ impl ModelInfo {
     /// Python health monitor expects: {"repository": "...", "num_blocks": 32}
     pub fn to_msgpack(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         // Build explicit dictionary for Python compatibility
-        let mut map = Vec::new();
-        map.push((
-            rmpv::Value::String("repository".into()),
-            rmpv::Value::String(self.repository.clone().into()),
-        ));
-        map.push((
-            rmpv::Value::String("num_blocks".into()),
-            rmpv::Value::from(self.num_blocks),
-        ));
+        let map = vec![
+            (
+                rmpv::Value::String("repository".into()),
+                rmpv::Value::String(self.repository.clone().into()),
+            ),
+            (
+                rmpv::Value::String("num_blocks".into()),
+                rmpv::Value::from(self.num_blocks),
+            ),
+        ];
 
         let value = rmpv::Value::Map(map);
 
@@ -349,6 +342,7 @@ async fn fetch_most_popular_model() -> Result<String, Box<dyn Error>> {
 }
 
 /// Announce server blocks and model info to the DHT
+#[allow(clippy::too_many_arguments)]
 async fn announce_to_dht(
     client: &mut kwaai_p2p_daemon::P2PClient,
     peer_id: PeerId,
@@ -641,7 +635,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // STEP 1: Start p2p-daemon
     // =========================================================================
     info!("[1/5] Starting p2p daemon with Petals bootstrap...");
-    let mut daemon = P2PDaemon::builder()
+    let daemon = P2PDaemon::builder()
         .dht(true) // Enable full DHT mode
         .relay(true) // Enable relay for NAT traversal
         .nat_portmap(true) // Try NAT port mapping
@@ -793,6 +787,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    #[allow(unreachable_code)]
     Ok(())
 }
 
@@ -981,7 +976,7 @@ async fn send_store_to_peer(
     Ok(())
 }
 
-/// Read a multistream-select message (varint-length-prefixed string)
+#[allow(dead_code)]
 async fn read_multistream_msg(
     stream: &mut tokio::net::TcpStream,
 ) -> Result<String, Box<dyn Error>> {
@@ -990,7 +985,7 @@ async fn read_multistream_msg(
     Ok(String::from_utf8_lossy(&msg_bytes).to_string())
 }
 
-/// Write a multistream-select message (varint-length-prefixed string)
+#[allow(dead_code)]
 async fn write_multistream_msg(
     stream: &mut tokio::net::TcpStream,
     msg: &str,
@@ -1009,7 +1004,7 @@ fn uuid() -> String {
     format!("{:x}", now)
 }
 
-/// Decode protobuf-encoded peer ID bytes to base58 format (Qm... or 12D3...)
+#[allow(dead_code)]
 fn decode_peer_id_from_protobuf(bytes: &[u8]) -> Option<String> {
     // Try to parse as libp2p PeerId
     match PeerId::from_bytes(bytes) {

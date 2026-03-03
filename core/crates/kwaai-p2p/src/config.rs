@@ -86,23 +86,25 @@ impl NetworkConfig {
     /// Create config with KwaaiNet bootstrap servers included.
     /// This enables DHT discovery via the KwaaiNet/Hivemind network.
     pub fn with_kwaai_bootstrap() -> Self {
-        let mut config = Self::default();
-        config.bootstrap_peers = KWAAI_BOOTSTRAP_SERVERS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        config
+        Self {
+            bootstrap_peers: KWAAI_BOOTSTRAP_SERVERS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ..Self::default()
+        }
     }
 
     /// Create config with Petals bootstrap servers included (legacy).
     /// This enables DHT discovery via the Petals/Hivemind network.
     pub fn with_petals_bootstrap() -> Self {
-        let mut config = Self::default();
-        config.bootstrap_peers = PETALS_BOOTSTRAP_SERVERS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        config
+        Self {
+            bootstrap_peers: PETALS_BOOTSTRAP_SERVERS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ..Self::default()
+        }
     }
 }
 

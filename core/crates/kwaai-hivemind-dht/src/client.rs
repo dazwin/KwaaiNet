@@ -152,7 +152,7 @@ impl HivemindDHT {
 
                 let results: Vec<StoreResult> = keys
                     .into_iter()
-                    .zip(store_res.store_ok.into_iter())
+                    .zip(store_res.store_ok)
                     .map(|(key, stored)| StoreResult { key, stored })
                     .collect();
 
@@ -167,7 +167,7 @@ impl HivemindDHT {
 
                 let results: Vec<GetResult> = keys
                     .into_iter()
-                    .zip(find_res.results.into_iter())
+                    .zip(find_res.results)
                     .map(|(key, find_result)| {
                         let result_type = ResultType::try_from(find_result.result_type)
                             .unwrap_or(ResultType::NotFound);

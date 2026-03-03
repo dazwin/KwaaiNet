@@ -6,7 +6,7 @@
 //! Run with: cargo run --example petals_dht
 
 use futures::StreamExt;
-use kwaai_p2p::{NetworkConfig, PETALS_BOOTSTRAP_SERVERS};
+use kwaai_p2p::NetworkConfig;
 use libp2p::{
     identify, identity,
     kad::{self, store::MemoryStore, Mode, QueryResult},

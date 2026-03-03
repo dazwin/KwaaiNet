@@ -156,7 +156,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         info!("Bootstrapping to: {}", addr);
 
         // Extract peer ID from multiaddr
-        if let Some(peer_id) = extract_peer_id(&addr) {
+        if let Some(peer_id) = extract_peer_id(addr) {
             swarm
                 .behaviour_mut()
                 .kademlia

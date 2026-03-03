@@ -1,8 +1,8 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn ensure_protoc(out_dir: &PathBuf) {
+fn ensure_protoc(out_dir: &Path) {
     // Check if protoc is already in PATH
     if Command::new("protoc").arg("--version").output().is_ok() {
         println!("cargo:warning=Found protoc in PATH");
@@ -67,14 +67,14 @@ fn ensure_protoc(out_dir: &PathBuf) {
             );
 
             Command::new("powershell")
-                .args(&["-Command", &download_cmd])
+                .args(["-Command", &download_cmd])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false)
         } else {
             // Linux/macOS: Use curl (more universally available than wget)
             Command::new("curl")
-                .args(&["-L", "-o"])
+                .args(["-L", "-o"])
                 .arg(&archive_path)
                 .arg(&url)
                 .status()
@@ -104,14 +104,14 @@ fn ensure_protoc(out_dir: &PathBuf) {
             );
 
             Command::new("powershell")
-                .args(&["-Command", &extract_cmd])
+                .args(["-Command", &extract_cmd])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false)
         } else {
             // Linux/macOS: Use unzip
             Command::new("unzip")
-                .args(&["-o", "-q"]) // -o: overwrite, -q: quiet
+                .args(["-o", "-q"]) // -o: overwrite, -q: quiet
                 .arg(&archive_path)
                 .arg("-d")
                 .arg(&protoc_dir)
@@ -204,7 +204,7 @@ fn main() {
         println!("cargo:warning=Cloning go-libp2p-daemon repository...");
 
         let clone_status = Command::new("git")
-            .args(&[
+            .args([
                 "clone",
                 "--depth",
                 "1",
@@ -240,7 +240,7 @@ fn main() {
     println!("cargo:warning=Building p2pd daemon from source...");
 
     let build_status = Command::new("go")
-        .args(&["build", "-o"])
+        .args(["build", "-o"])
         .arg(&daemon_binary)
         .arg("./p2pd")
         .current_dir(&repo_dir)

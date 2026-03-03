@@ -2,7 +2,7 @@
 
 use crate::averaging::{AveragingConfig, DecentralizedAverager};
 use crate::error::DistributedResult;
-use crate::moe::{DistributedMoE, MoEConfig};
+use crate::moe::DistributedMoE;
 use crate::DistributedConfig;
 use tracing::{debug, info};
 

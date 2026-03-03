@@ -15,17 +15,17 @@
 //! ```rust,no_run
 //! use kwaai_p2p_daemon::P2PDaemon;
 //!
-//! #[tokio::main]
+//! #[tokio::main(flavor = "current_thread")]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Start the daemon
-//!     let daemon = P2PDaemon::builder()
+//!     let mut daemon = P2PDaemon::builder()
 //!         .dht(true)
 //!         .relay(true)
 //!         .spawn()
 //!         .await?;
 //!
 //!     // Get a client to communicate with it
-//!     let client = daemon.client().await?;
+//!     let mut client = daemon.client().await?;
 //!
 //!     // Use the client...
 //!     let peer_id = client.identify().await?;

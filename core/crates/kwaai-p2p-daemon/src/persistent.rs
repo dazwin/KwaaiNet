@@ -431,7 +431,7 @@ impl PersistentConnection {
             reader
                 .read_exact(&mut length_buf[i..=i])
                 .await
-                .map_err(|e| Error::Io(e))?;
+                .map_err(Error::Io)?;
 
             if length_buf[i] & 0x80 == 0 {
                 // Last byte of varint
@@ -448,10 +448,7 @@ impl PersistentConnection {
 
         // Read message data
         let mut data = vec![0u8; length];
-        reader
-            .read_exact(&mut data)
-            .await
-            .map_err(|e| Error::Io(e))?;
+        reader.read_exact(&mut data).await.map_err(Error::Io)?;
 
         Ok(data)
     }
@@ -471,12 +468,9 @@ impl PersistentConnection {
         let length_bytes = varint_encode::usize(msg_buf.len(), &mut length_buf);
 
         // Write length + message
-        writer
-            .write_all(length_bytes)
-            .await
-            .map_err(|e| Error::Io(e))?;
-        writer.write_all(&msg_buf).await.map_err(|e| Error::Io(e))?;
-        writer.flush().await.map_err(|e| Error::Io(e))?;
+        writer.write_all(length_bytes).await.map_err(Error::Io)?;
+        writer.write_all(&msg_buf).await.map_err(Error::Io)?;
+        writer.flush().await.map_err(Error::Io)?;
 
         Ok(())
     }

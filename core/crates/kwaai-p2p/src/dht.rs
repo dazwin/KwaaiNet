@@ -1,7 +1,6 @@
 //! DHT (Distributed Hash Table) operations
 
 use crate::error::{P2PError, P2PResult};
-use async_trait::async_trait;
 use libp2p::PeerId;
 use std::collections::HashMap;
 use tokio::sync::mpsc;

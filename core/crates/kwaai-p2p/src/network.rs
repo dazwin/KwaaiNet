@@ -13,14 +13,14 @@ use libp2p::{
     identify, identity,
     kad::{self, store::MemoryStore, Mode, Quorum, Record, RecordKey},
     noise, request_response,
-    swarm::{NetworkBehaviour as SwarmBehaviour, SwarmEvent},
+    swarm::NetworkBehaviour as SwarmBehaviour,
     tcp, yamux, Multiaddr, PeerId, Swarm,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// The main KwaaiNet P2P network manager
 pub struct KwaaiNetwork {
@@ -37,6 +37,7 @@ pub struct KwaaiNetwork {
     dht: Arc<RwLock<DhtManager>>,
 
     /// Connected peers
+    #[allow(dead_code)]
     connected_peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
 
     /// Is network running (atomic for thread-safe access)
@@ -230,8 +231,6 @@ impl KwaaiNetwork {
         model_name: &str,
         server_info: &crate::hivemind::ServerInfo,
     ) -> P2PResult<()> {
-        use crate::hivemind::ServerInfo;
-
         info!("Announcing blocks to DHT for model: {}", model_name);
 
         // Serialize server info to MessagePack

@@ -20,6 +20,10 @@ version = "0.2.7"
 edition = "2021"
 publish = false
 
+[features]
+cuda = []
+metal = []
+
 [dependencies]
 kwaai-p2p = { path = "crates/kwaai-p2p" }
 kwaai-inference = { path = "crates/kwaai-inference" }

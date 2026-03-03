@@ -18,7 +18,7 @@ use libp2p::{
 };
 use std::error::Error;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 /// Combined network behaviour

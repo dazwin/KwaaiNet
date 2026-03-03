@@ -2,12 +2,12 @@
 
 use crate::codec::{DHTRequest, DHTResponse};
 use crate::protocol::*;
-use crate::value::{get_dht_time, DHTValue};
-use crate::{Error, Result};
+use crate::value::get_dht_time;
+use crate::Result;
 use libp2p::PeerId;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// DHT storage backend
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct DHTStorage {
 struct StoredValue {
     value: Vec<u8>,
     expiration_time: f64,
+    #[allow(dead_code)]
     in_cache: bool,
 }
 
