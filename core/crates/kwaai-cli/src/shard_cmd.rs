@@ -28,10 +28,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tokio::sync::RwLock;
 
 use crate::block_rpc::{
     call_block_forward, f16_bytes_to_tensor, make_block_rpc_handler, token_ids_to_bytes,
-    InferenceRequest, PayloadType,
+    InferenceRequest, PayloadType, ShardCell,
 };
 use crate::cli::{
     ShardAction, ShardArgs, ShardChainArgs, ShardDownloadArgs, ShardRunArgs, ShardServeArgs,
@@ -61,8 +62,7 @@ pub async fn run(args: ShardArgs) -> Result<()> {
                     ShardServeExit::UserStop => break,
                     ShardServeExit::Rebalance => {
                         print_info("Rebalancing — re-discovering gap and reloading shard…");
-                        // Next iteration will call pick_gap_blocks() fresh because
-                        // a.auto is true (--auto-rebalance implies --auto).
+                        // Next iteration calls pick_gap_blocks() fresh (default auto path).
                     }
                 }
             }
@@ -105,7 +105,7 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
 
     let target_blocks = args.blocks.unwrap_or(cfg.blocks) as usize;
 
-    let (start_block, end_block) = if args.auto || args.start_block.is_none() {
+    let (start_block, end_block) = if !args.no_auto && (args.auto || args.start_block.is_none()) {
         let daemon_addr = daemon_socket();
         let mut qc = P2PClient::connect(&daemon_addr)
             .await
@@ -152,12 +152,11 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
 
         (s, e)
     } else {
-        // --start-block was explicitly provided; sync config so the DHT announcer matches.
-        // Safety: the outer condition is `args.auto || args.start_block.is_none()`, so this
-        // else branch is only reached when start_block is Some.
-        #[allow(clippy::unnecessary_unwrap)]
-        let s = args.start_block.unwrap() as usize;
-        let e = s + target_blocks;
+        // Explicit range: --start-block N was given, or --no-auto was passed.
+        // Falls back to config.start_block when neither --start-block nor --no-auto gave a value.
+        let s = args.start_block.unwrap_or(cfg.start_block) as usize;
+        let total = cfg.model_total_blocks() as usize;
+        let e = (s + target_blocks).min(total);
         let mut updated = cfg.clone();
         updated.start_block = s as u32;
         updated.blocks = (e - s) as u32;
@@ -175,27 +174,7 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
         (s, e)
     };
 
-    // Resolve model directory (CLI override > HF snapshot for config.model)
-    let model_dir: PathBuf = if let Some(p) = args.model_path {
-        p
-    } else {
-        hf::resolve_snapshot(&cfg.model)?
-    };
-
-    let config_path = model_dir.join("config.json");
-
-    // Collect all *.safetensors files in the directory
-    let safetensors: Vec<PathBuf> = collect_safetensors(&model_dir)?;
-    if safetensors.is_empty() {
-        bail!(
-            "No .safetensors files found in {}. \
-             Pass --model-path to a HuggingFace snapshot directory.",
-            model_dir.display()
-        );
-    }
-    let paths: Vec<&Path> = safetensors.iter().map(|p| p.as_path()).collect();
-
-    // Detect device
+    // Detect device early (before any model I/O)
     let device_type = if cfg.use_gpu && !args.no_gpu {
         DeviceType::detect_best()
     } else {
@@ -205,31 +184,10 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
         .to_candle_device()
         .context("Failed to create compute device")?;
 
-    print_box_header("🧩 KwaaiNet Shard Server");
-    println!("  Model:       {}", model_dir.display());
-    println!("  Blocks:      [{}, {})", start_block, end_block);
-    println!("  Device:      {:?}", device_type);
-    println!("  Shards:      {} file(s)", safetensors.len());
-    println!();
-    println!("  Loading model shard…");
-
-    let shard = Arc::new(
-        TransformerShard::load(&paths, &config_path, &device, start_block, end_block)
-            .context("Failed to load transformer shard")?,
-    );
-
-    print_success(&format!(
-        "Shard loaded  ({} blocks)",
-        end_block - start_block
-    ));
-    println!(
-        "  is_first={} is_last={}",
-        shard.is_first(),
-        shard.is_last()
-    );
-    println!();
-
-    // Connect to the running p2pd
+    // ── Phase 1 complete — connect to p2pd and register placeholder handler ──
+    // The node will appear on the map immediately while the model loads in the
+    // background.  Inference requests arriving before loading completes receive
+    // a structured "warming up" error response.
     let daemon_addr = daemon_socket();
     let client = match P2PClient::connect(&daemon_addr).await {
         Ok(c) => c,
@@ -243,24 +201,31 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
         }
     };
 
-    // Register the inference RPC handler
-    let handler = make_block_rpc_handler(shard.clone(), device.clone());
+    // Shared cell: None until the background load task writes Some(shard).
+    let shard_cell: ShardCell = Arc::new(RwLock::new(None));
+
+    let handler = make_block_rpc_handler(shard_cell.clone(), device.clone());
     client
         .add_unary_handler(crate::block_rpc::INFERENCE_PROTO, handler, false)
         .await
         .context("Failed to register inference handler with p2pd")?;
 
+    print_box_header("🧩 KwaaiNet Shard Server");
+    println!("  Blocks:      [{}, {})", start_block, end_block);
+    println!("  Device:      {:?}", device_type);
+    println!("  Model:       {}", cfg.model);
+    println!();
     print_success(&format!(
-        "Inference handler registered on protocol {}",
+        "Node registered on protocol {} — appearing on map.",
         crate::block_rpc::INFERENCE_PROTO
     ));
-    print_info("Serving inference requests — press Ctrl-C to stop");
+    print_info("Loading model in background. Requests return 'warming up' until ready.");
     print_separator();
 
     // Start local TCP bypass server so `shard run` on the same machine can
     // call us without triggering libp2p's "dial to self" rejection.
     let _ = std::fs::create_dir_all(crate::config::run_dir());
-    match start_local_inference_server(shard.clone(), device.clone()).await {
+    match start_local_inference_server(shard_cell.clone(), device.clone()).await {
         Ok(port) => {
             if let Err(e) = std::fs::write(local_server_port_file(), port.to_string()) {
                 tracing::warn!("Could not write shard_local.port: {e}");
@@ -271,13 +236,91 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
         Err(e) => tracing::warn!("Could not start local bypass server: {e}"),
     }
 
-    // Background GC task: evict idle sessions every 30 s
-    let shard_gc = shard.clone();
+    // ── Phase 2+3: download (if needed) + load in background task ─────────────
+    let cell_bg = shard_cell.clone();
+    let model_id_bg = cfg.model.clone();
+    let model_path_bg = args.model_path.clone();
+    let device_bg = device.clone();
+    let total_blocks_bg = cfg.model_total_blocks() as usize;
+
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            shard_gc.gc_sessions();
+        let result: anyhow::Result<()> = async {
+            // Resolve model directory: CLI override > cached snapshot > download.
+            let model_dir: PathBuf = if let Some(p) = model_path_bg {
+                p
+            } else {
+                match hf::resolve_snapshot(&model_id_bg) {
+                    Ok(d) => d,
+                    Err(_) => {
+                        let is_first = start_block == 0;
+                        let is_last = end_block >= total_blocks_bg;
+                        print_info(&format!(
+                            "Model not cached — downloading files for blocks [{}, {})…",
+                            start_block, end_block
+                        ));
+                        hf::download_for_blocks(
+                            &model_id_bg,
+                            start_block,
+                            end_block,
+                            is_first,
+                            is_last,
+                            None,
+                        )
+                        .await
+                        .context("selective download for blocks")?
+                    }
+                }
+            };
+
+            let config_path = model_dir.join("config.json");
+            let safetensors: Vec<PathBuf> = collect_safetensors(&model_dir)?;
+            if safetensors.is_empty() {
+                anyhow::bail!(
+                    "No .safetensors files found in {}. \
+                     Pass --model-path to a HuggingFace snapshot directory.",
+                    model_dir.display()
+                );
+            }
+            let paths: Vec<&Path> = safetensors.iter().map(|p| p.as_path()).collect();
+
+            print_info(&format!(
+                "Loading shard ({} file(s), blocks [{}, {}))…",
+                safetensors.len(),
+                start_block,
+                end_block
+            ));
+            let shard = Arc::new(
+                TransformerShard::load(&paths, &config_path, &device_bg, start_block, end_block)
+                    .context("Failed to load transformer shard")?,
+            );
+
+            print_success(&format!(
+                "Shard ready  ({} blocks, is_first={}, is_last={})",
+                end_block - start_block,
+                shard.is_first(),
+                shard.is_last()
+            ));
+
+            // Make the shard available to the RPC handler.
+            *cell_bg.write().await = Some(shard.clone());
+
+            // Background GC task: evict idle sessions every 30 s.
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    shard.gc_sessions();
+                }
+            });
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            print_error(&format!("Background model load failed: {e:#}"));
+            print_info("Node will continue serving — requests will return 'warming up'.");
+            print_info("Fix the error above and restart `kwaainet shard serve`.");
         }
     });
 
@@ -288,7 +331,7 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
     // tokio::select! compiles with the same shape in both branches.
 
     let cfg_rb = KwaaiNetConfig::load_or_create()?;
-    let do_rebalance = args.auto_rebalance && args.auto;
+    let do_rebalance = args.auto_rebalance;
     let interval_secs = cfg_rb.rebalance_interval_secs;
     let min_redundancy = cfg_rb.rebalance_min_redundancy;
     let total_blocks_rb = cfg_rb.model_total_blocks() as usize;
@@ -829,7 +872,7 @@ pub async fn cmd_shard_status() -> Result<()> {
     println!(
         "  Range:        [{}, {})",
         cfg.start_block,
-        cfg.start_block + cfg.blocks
+        cfg.effective_end_block()
     );
     println!("  GPU:          {}", cfg.use_gpu);
     println!("  DHT prefix:   {}", cfg.effective_dht_prefix());
@@ -1313,8 +1356,11 @@ fn local_server_port_file() -> std::path::PathBuf {
 /// Spawn a local TCP server on `127.0.0.1:0` that serves the same
 /// msgpack inference protocol as the p2pd handler, without going through p2pd.
 /// Returns the bound port.  Called by `cmd_shard_serve`.
+///
+/// Accepts a [`ShardCell`] — returns a "warming up" error response when the
+/// background load task hasn't written the shard yet.
 async fn start_local_inference_server(
-    shard: Arc<TransformerShard>,
+    shard: ShardCell,
     device: candle_core::Device,
 ) -> Result<u16> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1344,20 +1390,41 @@ async fn start_local_inference_server(
                     return;
                 }
 
-                let resp_bytes =
-                    match crate::block_rpc::handle_inference_request(&shard, &device, &buf).await {
-                        Ok(r) => rmp_serde::to_vec_named(&r).unwrap_or_default(),
-                        Err(e) => {
-                            let err_resp = crate::block_rpc::InferenceResponse {
-                                session_id: 0,
-                                response_type: crate::block_rpc::ResponseType::HiddenStates,
-                                shape: vec![],
-                                data: vec![],
-                                error: Some(e.to_string()),
-                            };
-                            rmp_serde::to_vec_named(&err_resp).unwrap_or_default()
+                // Grab the shard (if loaded) without holding the lock during inference.
+                let shard_arc: Option<Arc<TransformerShard>> = {
+                    let guard = shard.read().await;
+                    guard.as_ref().cloned()
+                };
+
+                let resp_bytes = match shard_arc {
+                    None => {
+                        let err_resp = crate::block_rpc::InferenceResponse {
+                            session_id: 0,
+                            response_type: crate::block_rpc::ResponseType::HiddenStates,
+                            shape: vec![],
+                            data: vec![],
+                            error: Some(
+                                "node warming up — model loading in background".to_string(),
+                            ),
+                        };
+                        rmp_serde::to_vec_named(&err_resp).unwrap_or_default()
+                    }
+                    Some(s) => {
+                        match crate::block_rpc::handle_inference_request(&s, &device, &buf).await {
+                            Ok(r) => rmp_serde::to_vec_named(&r).unwrap_or_default(),
+                            Err(e) => {
+                                let err_resp = crate::block_rpc::InferenceResponse {
+                                    session_id: 0,
+                                    response_type: crate::block_rpc::ResponseType::HiddenStates,
+                                    shape: vec![],
+                                    data: vec![],
+                                    error: Some(e.to_string()),
+                                };
+                                rmp_serde::to_vec_named(&err_resp).unwrap_or_default()
+                            }
                         }
-                    };
+                    }
+                };
 
                 let len_bytes = (resp_bytes.len() as u32).to_le_bytes();
                 let _ = stream.write_all(&len_bytes).await;

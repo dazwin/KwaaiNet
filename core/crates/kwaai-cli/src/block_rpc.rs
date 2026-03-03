@@ -25,7 +25,18 @@ use kwaai_p2p_daemon::P2PClient;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, error};
+
+// ── Lazy-load cell ─────────────────────────────────────────────────────────────
+
+/// Shared, lazily populated shard slot.
+///
+/// Starts as `None` (node is "warming up" — registered on map but not yet
+/// serving inference).  The background load task writes `Some(shard)` when
+/// model weights have been fully loaded.  Inference handlers read this cell
+/// without blocking the load task.
+pub type ShardCell = Arc<RwLock<Option<Arc<TransformerShard>>>>;
 
 // ── Protocol constant ─────────────────────────────────────────────────────────
 
@@ -180,11 +191,16 @@ pub async fn call_block_forward(
 /// [`P2PClient::add_unary_handler`] that dispatches incoming activation
 /// tensors through the local shard.
 ///
+/// Accepts a [`ShardCell`] instead of a bare `Arc<TransformerShard>`.
+/// When the cell is `None` (model still loading) the handler immediately
+/// returns a "node warming up" error response — the coordinator can retry
+/// after a short back-off.
+///
 /// The returned closure is `'static + Send + Sync` so it can be registered
 /// with the p2p daemon.
 #[allow(clippy::type_complexity)]
 pub fn make_block_rpc_handler(
-    shard: Arc<TransformerShard>,
+    shard: ShardCell,
     device: Device,
 ) -> impl Fn(
     Vec<u8>,
@@ -197,28 +213,51 @@ pub fn make_block_rpc_handler(
         let shard = shard.clone();
         let device = device.clone();
         Box::pin(async move {
-            match handle_inference_request(&shard, &device, &data).await {
-                Ok(resp) => rmp_serde::to_vec_named(&resp).map_err(|e| {
-                    kwaai_p2p_daemon::error::Error::Protocol(format!(
-                        "Failed to serialise response: {e}"
-                    ))
-                }),
-                Err(e) => {
-                    error!("Inference request failed: {e:#}");
-                    // Return an error response rather than dropping the connection
+            // Read the shard cell and clone the Arc (drops the read lock immediately).
+            let shard_arc: Option<Arc<TransformerShard>> = {
+                let guard = shard.read().await;
+                guard.as_ref().cloned()
+            };
+
+            match shard_arc {
+                None => {
+                    // Model not yet loaded — return a structured error so the coordinator
+                    // can back-off and retry rather than treating this as a fatal failure.
                     let resp = InferenceResponse {
                         session_id: 0,
                         response_type: ResponseType::HiddenStates,
                         shape: vec![],
                         data: vec![],
-                        error: Some(e.to_string()),
+                        error: Some("node warming up — model loading in background".to_string()),
                     };
                     rmp_serde::to_vec_named(&resp).map_err(|e| {
                         kwaai_p2p_daemon::error::Error::Protocol(format!(
-                            "Failed to serialise error response: {e}"
+                            "Failed to serialise warming-up response: {e}"
                         ))
                     })
                 }
+                Some(s) => match handle_inference_request(&s, &device, &data).await {
+                    Ok(resp) => rmp_serde::to_vec_named(&resp).map_err(|e| {
+                        kwaai_p2p_daemon::error::Error::Protocol(format!(
+                            "Failed to serialise response: {e}"
+                        ))
+                    }),
+                    Err(e) => {
+                        error!("Inference request failed: {e:#}");
+                        let resp = InferenceResponse {
+                            session_id: 0,
+                            response_type: ResponseType::HiddenStates,
+                            shape: vec![],
+                            data: vec![],
+                            error: Some(e.to_string()),
+                        };
+                        rmp_serde::to_vec_named(&resp).map_err(|e| {
+                            kwaai_p2p_daemon::error::Error::Protocol(format!(
+                                "Failed to serialise error response: {e}"
+                            ))
+                        })
+                    }
+                },
             }
         })
     }

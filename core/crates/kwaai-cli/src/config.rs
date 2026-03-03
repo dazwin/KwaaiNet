@@ -212,7 +212,7 @@ fn default_blocks() -> u32 {
     std::env::var("KWAAINET_BLOCKS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1)
+        .unwrap_or(8)
 }
 fn default_port() -> u16 {
     std::env::var("KWAAINET_PORT")
@@ -412,6 +412,16 @@ impl KwaaiNetConfig {
         }
     }
 
+    /// Effective last block (exclusive) this node serves, clamped to the
+    /// total number of transformer blocks in the model.
+    ///
+    /// Prevents `end_block = start_block + blocks` from exceeding the model
+    /// size when the operator sets a large `blocks` value.
+    pub fn effective_end_block(&self) -> u32 {
+        let total = self.model_total_blocks() as u32;
+        (self.start_block + self.blocks).min(total)
+    }
+
     /// Set a top-level key by name (string value coerced to the right type).
     pub fn set_key(&mut self, key: &str, value: &str) -> Result<()> {
         match key {
@@ -484,5 +494,47 @@ mod dirs_sys {
     use std::path::PathBuf;
     pub fn home_dir() -> Option<PathBuf> {
         dirs::home_dir()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(start: u32, blocks: u32, total_hint: &str) -> KwaaiNetConfig {
+        KwaaiNetConfig {
+            model: total_hint.to_string(), // name heuristic drives model_total_blocks()
+            start_block: start,
+            blocks,
+            ..KwaaiNetConfig::default()
+        }
+    }
+
+    #[test]
+    fn effective_end_block_no_clamp() {
+        // 0 + 8 = 8 < 32 — no clamping needed
+        let c = cfg(0, 8, "unsloth/Llama-3-8B");
+        assert_eq!(c.effective_end_block(), 8);
+    }
+
+    #[test]
+    fn effective_end_block_clamps_to_model_total() {
+        // 8 + 32 = 40, but model has 32 blocks → clamped to 32
+        let c = cfg(8, 32, "unsloth/Llama-3-8B");
+        assert_eq!(c.effective_end_block(), 32);
+    }
+
+    #[test]
+    fn effective_end_block_exact_fit() {
+        // 0 + 32 = 32 == total — no clamping
+        let c = cfg(0, 32, "unsloth/Llama-3-8B");
+        assert_eq!(c.effective_end_block(), 32);
+    }
+
+    #[test]
+    fn effective_end_block_70b_model() {
+        // 70B has 80 blocks; 72 + 32 = 104 → clamped to 80
+        let c = cfg(72, 32, "meta/Llama-2-70B");
+        assert_eq!(c.effective_end_block(), 80);
     }
 }

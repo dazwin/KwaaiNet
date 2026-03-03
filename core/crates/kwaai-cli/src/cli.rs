@@ -514,11 +514,17 @@ pub struct ShardServeArgs {
 
     /// Auto-discover which blocks are unserved and load those instead of config start_block.
     /// Uses --blocks (or config.blocks) as the target count.
+    /// This is now the default when --start-block is not given; kept as a no-op alias.
     #[arg(long)]
     pub auto: bool,
 
+    /// Disable automatic DHT gap discovery and use start_block from config.yaml instead.
+    /// Useful when you want a node to serve a fixed, pre-configured range.
+    #[arg(long)]
+    pub no_auto: bool,
+
     /// Periodically check DHT coverage and move blocks to fill gaps when our current
-    /// range is already well-covered by other nodes. Requires --auto.
+    /// range is already well-covered by other nodes.
     /// Interval and redundancy threshold are set via `kwaainet config set`.
     #[arg(long)]
     pub auto_rebalance: bool,

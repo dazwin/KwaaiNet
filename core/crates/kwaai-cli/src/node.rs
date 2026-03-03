@@ -537,7 +537,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
 
     let server_info = DHTServerInfo::new(
         config.start_block as i32,
-        (config.start_block + config.blocks) as i32,
+        config.effective_end_block() as i32,
         &public_name,
         using_relay,
         throughput,
@@ -554,7 +554,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         &repository,
         config.model_total_blocks(),
         config.start_block as i32,
-        (config.start_block + config.blocks) as i32,
+        config.effective_end_block() as i32,
         &server_info,
     )
     .await
@@ -567,7 +567,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     info!(
         "   Blocks  : {}–{}",
         config.start_block,
-        config.start_block + config.blocks
+        config.effective_end_block()
     );
     info!("   Map     : https://map.kwaai.ai");
 
@@ -602,7 +602,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                 if let Err(e) = announce(
                     &mut client, peer_id, &storage, &bootstrap_peers,
                     &prefix, &repository, config.model_total_blocks(),
-                    config.start_block as i32, (config.start_block + config.blocks) as i32, &server_info,
+                    config.start_block as i32, config.effective_end_block() as i32, &server_info,
                 ).await {
                     warn!("Re-announce failed: {}", e);
                 }
