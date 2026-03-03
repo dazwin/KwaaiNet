@@ -363,8 +363,9 @@ async fn download_file(
     drop(file);
 
     let size = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(downloaded);
-    print!("\r");
-    println!("  [{idx:2}/{total}] {fname}  ✓  {}", fmt_bytes(size));
+    // \r moves to column 0; \x1b[K clears to end-of-line (works on all modern
+    // terminals incl. Windows Terminal / PowerShell; harmless on others).
+    print!("\r\x1b[K  [{idx:2}/{total}] {fname}  ✓  {}\n", fmt_bytes(size));
     let _ = std::io::stdout().flush();
 
     std::fs::rename(&tmp, dest)
