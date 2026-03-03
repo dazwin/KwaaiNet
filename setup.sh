@@ -66,7 +66,17 @@ else
     echo "✅ unzip found"
 fi
 
-# 4. Rust toolchain
+# 4. libssl-dev (Linux only, required for TLS/OpenSSL linking)
+if [ "$OS" = "linux" ]; then
+    if ! dpkg -s libssl-dev &> /dev/null 2>&1; then
+        echo "📦 Installing libssl-dev..."
+        sudo apt update && sudo apt install -y libssl-dev
+    else
+        echo "✅ libssl-dev found"
+    fi
+fi
+
+# 6. Rust toolchain
 if ! command -v cargo &> /dev/null; then
     echo "📦 Installing Rust toolchain..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -90,7 +100,7 @@ else
     fi
 fi
 
-# 5. Go toolchain
+# 7. Go toolchain
 if ! command -v go &> /dev/null; then
     echo "📦 Installing Go 1.21..."
 
