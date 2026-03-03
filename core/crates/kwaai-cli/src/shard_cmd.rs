@@ -114,7 +114,8 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
         let our_peer_id =
             PeerId::from_bytes(&hex::decode(&peer_id_hex)?).context("parse our peer ID")?;
         let total = cfg.model_total_blocks() as usize;
-        let prefix = cfg.model_dht_prefix.as_deref().unwrap_or("unknown");
+        let prefix_owned = cfg.effective_dht_prefix();
+        let prefix = prefix_owned.as_str();
         let bootstrap_peers: Vec<String> = if cfg.initial_peers.is_empty() {
             NetworkConfig::with_petals_bootstrap().bootstrap_peers
         } else {
@@ -292,10 +293,7 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
     let min_redundancy = cfg_rb.rebalance_min_redundancy;
     let total_blocks_rb = cfg_rb.model_total_blocks() as usize;
     let target_blocks_rb = args.blocks.unwrap_or(cfg_rb.blocks) as usize;
-    let dht_prefix_rb = cfg_rb
-        .model_dht_prefix
-        .clone()
-        .unwrap_or_else(|| derive_dht_prefix(&cfg_rb.model));
+    let dht_prefix_rb = cfg_rb.effective_dht_prefix();
     let bootstrap_peers_rb: Vec<String> = if cfg_rb.initial_peers.is_empty() {
         NetworkConfig::with_petals_bootstrap().bootstrap_peers
     } else {
@@ -572,9 +570,13 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     let cfg = KwaaiNetConfig::load_or_create()?;
 
     let model_ref = args.model.as_deref().unwrap_or(&cfg.model);
-    let dht_prefix = match &cfg.model_dht_prefix {
-        Some(p) => p.clone(),
-        None => derive_dht_prefix(model_ref),
+    // If a model was passed on the CLI that differs from config, build a temporary
+    // config with that model name so effective_dht_prefix() derives the right key.
+    let dht_prefix = if args.model.is_some() && args.model.as_deref() != Some(&cfg.model) {
+        let base = model_ref.split('/').next_back().unwrap_or(model_ref);
+        base.replace('.', "-")
+    } else {
+        cfg.effective_dht_prefix()
     };
     let total_blocks = args
         .total_blocks
@@ -848,10 +850,8 @@ pub async fn cmd_shard_chain(args: ShardChainArgs) -> Result<()> {
 
     let dht_prefix = args
         .dht_prefix
-        .as_deref()
-        .or(cfg.model_dht_prefix.as_deref())
-        .map(str::to_string)
-        .unwrap_or_else(|| derive_dht_prefix(&cfg.model));
+        .clone()
+        .unwrap_or_else(|| cfg.effective_dht_prefix());
 
     let total_blocks = args.total_blocks;
 
@@ -1555,9 +1555,3 @@ fn rand_session_id() -> u64 {
     x ^ (x >> 31)
 }
 
-/// Derive a DHT prefix from a model name/path using Petals conventions.
-/// e.g. `"meta-llama/Llama-3.1-8B-Instruct"` → `"Llama-3-1-8B-Instruct"`.
-fn derive_dht_prefix(model: &str) -> String {
-    let base = model.split('/').next_back().unwrap_or(model);
-    base.replace('.', "-")
-}

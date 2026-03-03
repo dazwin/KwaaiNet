@@ -258,12 +258,6 @@ fn dht_id(raw_key: &str) -> Vec<u8> {
     Sha1::new().chain_update(&packed).finalize().to_vec()
 }
 
-/// Convert a model name to a Hivemind DHT prefix as a fallback.
-/// Prefer using the canonical prefix from the map API (config.model_dht_prefix).
-/// "unsloth/Llama-3.1-8B-Instruct" → "unsloth-Llama-3-1-8B-Instruct"
-fn dht_prefix_fallback(model: &str) -> String {
-    model.replace(['.', '/'], "-")
-}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -486,10 +480,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
 
     // Use the canonical DHT prefix from the map (set during startup model selection).
     // Falls back to a computed prefix if the map wasn't consulted (e.g. --model override).
-    let prefix = config
-        .model_dht_prefix
-        .clone()
-        .unwrap_or_else(|| dht_prefix_fallback(&config.model));
+    let prefix = config.effective_dht_prefix();
     let repository = config.model_repository.clone().unwrap_or_else(|| {
         if config.model.contains('/') {
             format!("https://huggingface.co/{}", config.model)

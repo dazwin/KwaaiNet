@@ -369,6 +369,22 @@ impl KwaaiNetConfig {
         Ok(())
     }
 
+    /// Return the effective DHT prefix for this node's model.
+    ///
+    /// Uses the canonical prefix set by the map API when available.
+    /// Falls back to deriving it from the model name using Petals conventions:
+    /// `"org/Model-Name.1B"` → `"Model-Name-1B"` (basename only, dots to dashes).
+    ///
+    /// This is the single source of truth — both `node.rs` and `shard_cmd.rs`
+    /// call this so they always agree on the DHT key.
+    pub fn effective_dht_prefix(&self) -> String {
+        if let Some(ref p) = self.model_dht_prefix {
+            return p.clone();
+        }
+        let base = self.model.split('/').next_back().unwrap_or(&self.model);
+        base.replace('.', "-")
+    }
+
     /// Total transformer blocks in the full model.
     ///
     /// Reads `num_hidden_layers` from the model's `config.json` when the
