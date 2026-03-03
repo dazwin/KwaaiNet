@@ -565,6 +565,15 @@ pub struct ShardRunArgs {
     /// Path to model dir for tokenizer (overrides HF cache lookup)
     #[arg(long, value_name = "PATH")]
     pub model_path: Option<std::path::PathBuf>,
+
+    /// Run inference entirely in-process — load model locally without `shard serve`.
+    /// Requires --model-path (or a cached HF snapshot). No P2P or TCP overhead.
+    #[arg(long)]
+    pub local: bool,
+
+    /// Disable GPU and use CPU only (applies when --local is set)
+    #[arg(long)]
+    pub no_gpu: bool,
 }
 
 #[derive(Args)]

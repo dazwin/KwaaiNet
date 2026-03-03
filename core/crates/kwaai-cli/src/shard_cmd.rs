@@ -399,9 +399,176 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
     Ok(exit)
 }
 
+// ── run --local (in-process, no networking) ───────────────────────────────────
+
+/// Load the model in-process and run inference without any P2P or TCP overhead.
+/// Used by `shard run --local` for single-machine testing.
+async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
+    use kwaai_inference::tokenizer::Tokenizer as _;
+
+    let cfg = KwaaiNetConfig::load_or_create()?;
+    let model_ref = args.model.as_deref().unwrap_or(&cfg.model);
+
+    print_box_header("🔗 KwaaiNet Local Inference");
+    println!("  Model:  {}", model_ref);
+    println!("  Prompt: {:?}", args.prompt);
+    println!("  Device: {}", if args.no_gpu { "CPU" } else { "auto" });
+    println!();
+
+    // Resolve model path
+    let model_dir = if let Some(p) = &args.model_path {
+        p.clone()
+    } else {
+        hf::resolve_snapshot(model_ref)?
+    };
+
+    // Load tokenizer
+    let tokenizer_path = model_dir.join("tokenizer.json");
+    let tokenizer = kwaai_inference::tokenizer::BpeTokenizer::from_file(&tokenizer_path)
+        .context("Failed to load tokenizer")?;
+
+    // Apply chat template
+    let formatted_prompt = if tokenizer.token_to_id("<|start_header_id|>").is_some() {
+        format!(
+            "<|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            args.prompt
+        )
+    } else if tokenizer.token_to_id("<|im_start|>").is_some() {
+        format!(
+            "<|im_start|>user\n{}\n<|im_end|>\n<|im_start|>assistant\n",
+            args.prompt
+        )
+    } else {
+        args.prompt.clone()
+    };
+
+    let mut token_ids: Vec<u32> = tokenizer
+        .encode(&formatted_prompt)
+        .context("Failed to encode prompt")?;
+    if let Some(bos) = tokenizer.bos_token_id() {
+        token_ids.insert(0, bos);
+    }
+    let eos_id = tokenizer.eos_token_id().unwrap_or(2);
+
+    // Pick device
+    let device_type = if args.no_gpu {
+        kwaai_inference::DeviceType::Cpu
+    } else {
+        kwaai_inference::DeviceType::detect_best()
+    };
+    let device = device_type
+        .to_candle_device()
+        .context("Failed to create compute device")?;
+
+    // Load shard covering all blocks
+    let config_path = model_dir.join("config.json");
+    let total_blocks = args
+        .total_blocks
+        .unwrap_or_else(|| cfg.model_total_blocks() as usize);
+
+    // Discover safetensors shards
+    let paths: Vec<std::path::PathBuf> = {
+        let mut p: Vec<_> = std::fs::read_dir(&model_dir)
+            .context("read model dir")?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().and_then(|e| e.to_str()) == Some("safetensors")
+            })
+            .collect();
+        p.sort();
+        p
+    };
+    if paths.is_empty() {
+        bail!(
+            "No .safetensors files found in {}",
+            model_dir.display()
+        );
+    }
+
+    print_info(&format!("Loading {} shard(s) on {:?}…", paths.len(), device_type));
+
+    let path_refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+    let shard = Arc::new(
+        TransformerShard::load(&path_refs, &config_path, &device, 0, total_blocks)
+            .context("Failed to load model")?,
+    );
+
+    print_success(&format!("Model loaded ({} blocks)", total_blocks));
+    println!("  Input tokens: {}", token_ids.len());
+    println!();
+
+    let session_id: u64 = args.session_id.unwrap_or_else(rand_session_id);
+    let max_tokens = args.max_tokens;
+    let temperature = args.temperature;
+    let top_k = args.top_k;
+    let top_p = args.top_p;
+
+    let mut generated_ids: Vec<u32> = Vec::new();
+    let mut seq_pos: usize = 0;
+    let mut current_ids = token_ids.clone();
+
+    print!("  Assistant: ");
+    use std::io::Write as _;
+    std::io::stdout().flush().ok();
+
+    loop {
+        // Run full forward pass in-process
+        let logits = tokio::task::spawn_blocking({
+            let shard = shard.clone();
+            let ids = current_ids.clone();
+            let sp = seq_pos;
+            move || shard.forward_full(session_id, &ids, sp)
+        })
+        .await
+        .context("join forward_full")?
+        .context("forward_full")?;
+
+        // logits shape: [1, seq_len, vocab] or [vocab]
+        let last_logits = {
+            let dims = logits.dims();
+            if dims.len() == 3 && dims[1] > 1 {
+                use candle_core::IndexOp as _;
+                logits.i((0, dims[1] - 1, ..))?
+            } else {
+                logits.flatten_all()?
+            }
+        };
+
+        // Move logits to CPU for sampling
+        let last_logits = last_logits.to_device(&candle_core::Device::Cpu)?;
+        let next_id = sample_token(&last_logits, temperature, top_k, top_p)? as u32;
+
+        if let Ok(piece) = tokenizer.decode(&[next_id]) {
+            print!("{}", piece);
+            std::io::stdout().flush().ok();
+        }
+
+        generated_ids.push(next_id);
+        seq_pos += current_ids.len();
+
+        if next_id == eos_id || generated_ids.len() >= max_tokens {
+            break;
+        }
+
+        current_ids = vec![next_id];
+    }
+
+    println!();
+    println!();
+    print_success(&format!("Generated {} token(s)", generated_ids.len()));
+    print_separator();
+    Ok(())
+}
+
 // ── run ───────────────────────────────────────────────────────────────────────
 
 pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
+    // --local: bypass all networking, load model in-process and infer directly.
+    if args.local {
+        return cmd_shard_run_local(args).await;
+    }
+
     let cfg = KwaaiNetConfig::load_or_create()?;
 
     let model_ref = args.model.as_deref().unwrap_or(&cfg.model);
@@ -522,9 +689,27 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
 
     use kwaai_inference::tokenizer::Tokenizer as _;
 
-    // Tokenize prompt
+    // Apply chat template based on tokenizer vocab, then tokenize.
+    // Instruct models require special header tokens around the user turn.
+    let formatted_prompt = if tokenizer.token_to_id("<|start_header_id|>").is_some() {
+        // Llama-3 instruct format
+        format!(
+            "<|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            args.prompt
+        )
+    } else if tokenizer.token_to_id("<|im_start|>").is_some() {
+        // ChatML format (Mistral-Instruct, Qwen, etc.)
+        format!(
+            "<|im_start|>user\n{}\n<|im_end|>\n<|im_start|>assistant\n",
+            args.prompt
+        )
+    } else {
+        // Base models / Llama-2: raw prompt
+        args.prompt.clone()
+    };
+
     let mut token_ids: Vec<u32> = tokenizer
-        .encode(&args.prompt)
+        .encode(&formatted_prompt)
         .context("Failed to encode prompt")?;
 
     // Prepend BOS token if available
