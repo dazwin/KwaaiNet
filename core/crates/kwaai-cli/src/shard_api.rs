@@ -7,7 +7,7 @@
 //!   POST /v1/chat/completions   (per-token SSE streaming + non-streaming)
 //!   POST /v1/completions        (per-token SSE streaming + non-streaming)
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use axum::{
     extract::State,
     response::{
@@ -545,9 +545,17 @@ pub async fn run(args: ShardApiArgs) -> Result<()> {
 
     // Connect to p2pd
     let daemon_addr = daemon_socket();
-    let mut client = P2PClient::connect(&daemon_addr)
-        .await
-        .context("Cannot connect to node — start it first with `kwaainet start --daemon`")?;
+    let mut client = match P2PClient::connect(&daemon_addr).await {
+        Ok(c) => c,
+        Err(_) => {
+            print_error("Cannot connect to the KwaaiNet node — is it running?");
+            print_info("Start it:     kwaainet start --daemon");
+            print_info("Check status: kwaainet status");
+            print_info("View logs:    kwaainet logs --follow");
+            print_separator();
+            bail!("KwaaiNet node is not running");
+        }
+    };
 
     let peer_id_hex = client.identify().await.context("identify peer")?;
     let our_peer_id = PeerId::from_bytes(&hex::decode(&peer_id_hex)?).context("parse peer ID")?;

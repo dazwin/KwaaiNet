@@ -292,7 +292,7 @@ async fn main() -> Result<()> {
             let log_path = config::log_file();
 
             if !log_path.exists() {
-                print_warning("No log file found yet. Start the node first.");
+                print_warning("No log file found. Start the node first: kwaainet start --daemon");
                 return Ok(());
             }
 

@@ -388,7 +388,10 @@ impl KwaaiNetConfig {
                     .parse()
                     .map_err(|_| anyhow::anyhow!("start_block must be a non-negative integer"))?
             }
-            _ => anyhow::bail!("Unknown config key: {}", key),
+            _ => anyhow::bail!(
+                "Unknown config key '{}'. Run `kwaainet config set --help` to see valid keys.",
+                key
+            ),
         }
         self.save()
     }
