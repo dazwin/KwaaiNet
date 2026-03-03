@@ -76,7 +76,7 @@ else
     echo "✅ Rust found: $(cargo --version)"
 
     # Check Rust version - need 1.80+ for edition2024 support
-    RUST_VERSION=$(cargo --version | grep -oP '\d+\.\d+' | head -1)
+    RUST_VERSION=$(cargo --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
     MAJOR=$(echo $RUST_VERSION | cut -d. -f1)
     MINOR=$(echo $RUST_VERSION | cut -d. -f2)
 
@@ -124,7 +124,7 @@ else
     echo "✅ Go found: $(go version)"
 
     # Check Go version - need 1.20+
-    GO_VERSION=$(go version | grep -oP 'go\d+\.\d+' | grep -oP '\d+\.\d+')
+    GO_VERSION=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+')
     GO_MAJOR=$(echo $GO_VERSION | cut -d. -f1)
     GO_MINOR=$(echo $GO_VERSION | cut -d. -f2)
 
