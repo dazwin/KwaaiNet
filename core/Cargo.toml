@@ -45,7 +45,7 @@ async-trait = "0.1"
 chrono = "0.4"
 hex = "0.4"
 sha1 = "0.10"
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"], default-features = false }
 rmp-serde = "1.1"
 rmpv = "1.0"
 
@@ -159,7 +159,7 @@ rmp-serde = "1.1"
 sysinfo = "0.30"
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"], default-features = false }
 
 # Error handling
 thiserror = "1.0"
@@ -200,6 +200,8 @@ targets = [
     "x86_64-apple-darwin",
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
     "x86_64-pc-windows-msvc",
 ]
 # Build p2pd (Go binary) alongside kwaainet and bundle it in the same archive

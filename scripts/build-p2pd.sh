@@ -21,12 +21,18 @@ TARGET="${CARGO_BUILD_TARGET:-}"
 OUT_DIR="$(cd "${CARGO_DIST_EXTRA_ARTIFACTS_DIR:-.}" && pwd)"
 
 # ── Derive GOOS / GOARCH from Rust target triple ─────────────────────────────
+CGO_ENABLED=1  # default; overridden to 0 for Linux so p2pd is statically linked
+
 case "${TARGET}" in
-    aarch64-apple-darwin)     GOOS=darwin  GOARCH=arm64  ;;
-    x86_64-apple-darwin)      GOOS=darwin  GOARCH=amd64  ;;
-    x86_64-unknown-linux-gnu) GOOS=linux   GOARCH=amd64  ;;
-    aarch64-unknown-linux-gnu)GOOS=linux   GOARCH=arm64  ;;
-    x86_64-pc-windows-msvc)   GOOS=windows GOARCH=amd64  ;;
+    aarch64-apple-darwin)      GOOS=darwin  GOARCH=arm64 ;;
+    x86_64-apple-darwin)       GOOS=darwin  GOARCH=amd64 ;;
+    # Linux — always build with CGO_ENABLED=0 so the binary is statically linked
+    # and runs on any kernel regardless of glibc version or musl/gnu libc.
+    x86_64-unknown-linux-gnu)  GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 ;;
+    aarch64-unknown-linux-gnu) GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 ;;
+    x86_64-unknown-linux-musl) GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 ;;
+    aarch64-unknown-linux-musl)GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 ;;
+    x86_64-pc-windows-msvc)    GOOS=windows GOARCH=amd64 ;;
     *)
         # Fallback: let Go detect the host platform
         GOOS="$(go env GOOS)"
@@ -34,7 +40,7 @@ case "${TARGET}" in
         ;;
 esac
 
-export GOOS GOARCH
+export GOOS GOARCH CGO_ENABLED
 
 BINARY_NAME="p2pd"
 if [ "${GOOS}" = "windows" ]; then
