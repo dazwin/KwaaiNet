@@ -832,9 +832,7 @@ pub async fn cmd_shard_status() -> Result<()> {
         cfg.start_block + cfg.blocks
     );
     println!("  GPU:          {}", cfg.use_gpu);
-    if let Some(ref prefix) = cfg.model_dht_prefix {
-        println!("  DHT prefix:   {}", prefix);
-    }
+    println!("  DHT prefix:   {}", cfg.effective_dht_prefix());
     println!();
     print_info("To serve this shard: kwaainet shard serve");
     print_info("To change range:     kwaainet config --set start_block 4");
