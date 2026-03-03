@@ -249,7 +249,9 @@ For contributors, we provide:
 
 ## Release Process
 
-Only maintainers cut releases. Releases are fully automated via [cargo-dist](https://opensource.axodotdev.com/cargo-dist/) — pushing a version tag triggers the CI workflow which builds all platforms, generates installers, verifies checksums, publishes the Homebrew formula, and publishes crates to crates.io.
+Only maintainers cut releases. Releases are fully automated via [cargo-dist](https://opensource.axodotdev.com/cargo-dist/) and [cargo-release](https://github.com/crate-ci/cargo-release) — a single command bumps all versions, commits, tags, and pushes. The tag triggers CI which builds all platforms, publishes binaries, updates the Homebrew formula, and publishes crates to crates.io.
+
+All workspace crates are versioned in lockstep. Versions are centralised in `[workspace.package]` and `[workspace.dependencies]` inside `core/Cargo.toml`.
 
 ### Release tooling
 
@@ -259,9 +261,17 @@ Install `cargo-release` once:
 cargo install cargo-release
 ```
 
-### 1. Bump the version and tag
+### 1. Dry-run locally (optional but recommended)
 
-From the `core/` directory, run:
+```bash
+docker compose -f docker-compose.ci.yml run --rm publish-dry-run
+```
+
+This validates that every crate packages correctly against crates.io without uploading anything.
+
+### 2. Bump the version and tag
+
+From the `core/` directory:
 
 ```bash
 cd core
@@ -281,13 +291,15 @@ The tag push triggers `.github/workflows/release.yml`, which:
 - Generates SHA256-verified `.tar.xz` / `.zip` archives
 - Publishes `kwaainet-installer.sh` and `kwaainet-installer.ps1`
 - Pushes the Homebrew formula to `Kwaai-AI-Lab/homebrew-tap`
+- Publishes all crates to crates.io in dependency order
 
 ### 3. Verify the release
 
-- **Actions tab**: all 5 `build-local-artifacts` jobs + `build-global-artifacts` + `publish-homebrew-formula` green
+- **Actions tab**: all 5 `build-local-artifacts` jobs + `build-global-artifacts` + `publish-homebrew-formula` + `publish-crates` green
 - **Release page**: `.tar.xz` for each platform, `.zip` for Windows, `kwaainet-installer.sh/ps1`, `sha256.sum`
 - **Installer test**: `curl --proto '=https' --tlsv1.2 -LsSf .../kwaainet-installer.sh | sh` → correct version
 - **Homebrew test**: `brew upgrade kwaainet && kwaainet --version`
+- **crates.io**: each crate appears at the new version under [crates.io/crates/kwaai-cli](https://crates.io/crates/kwaai-cli)
 
 ---
 
