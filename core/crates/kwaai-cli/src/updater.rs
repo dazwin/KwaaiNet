@@ -140,20 +140,40 @@ impl UpdateChecker {
 
         #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+
             let url = "https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest/download/kwaainet-installer.ps1";
             let tmp = std::env::temp_dir().join("kwaainet-installer.ps1");
             self.download_to(url, &tmp).await?;
 
-            let status = std::process::Command::new("powershell")
-                .args(["-ExecutionPolicy", "Bypass", "-File"])
-                .arg(&tmp)
-                .status()
-                .context("Failed to launch installer")?;
+            // Windows locks running executables, so we can't overwrite kwaainet.exe
+            // while this process is alive.  Write a batch script that sleeps until
+            // we exit, then runs the PowerShell installer, then deletes itself.
+            let bat = std::env::temp_dir().join("kwaainet-update.bat");
+            let ps_path = tmp.to_string_lossy().replace('\'', "''");
+            let bat_content = format!(
+                "@echo off\r\n\
+                 ping -n 3 127.0.0.1 > nul\r\n\
+                 powershell -ExecutionPolicy Bypass -File \"{ps_path}\"\r\n\
+                 del /f \"{ps_path}\"\r\n\
+                 del /f \"%~f0\"\r\n"
+            );
+            std::fs::write(&bat, &bat_content)
+                .context("Failed to write updater batch script")?;
 
-            let _ = std::fs::remove_file(&tmp);
-            if !status.success() {
-                anyhow::bail!("Installer exited with {}", status);
-            }
+            // Launch the batch detached (no window) and return immediately.
+            // kwaainet.exe will exit after this function returns, freeing the lock.
+            std::process::Command::new("cmd")
+                .args(["/c", bat.to_str().unwrap_or("kwaainet-update.bat")])
+                .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+                .spawn()
+                .context("Failed to spawn updater batch")?;
+
+            // Print notice — the actual install happens a few seconds after we exit.
+            println!("  Update will complete in a moment (installer running in background).");
+            println!("  Run  kwaainet start --daemon  once it finishes.");
         }
 
         #[cfg(not(any(unix, windows)))]

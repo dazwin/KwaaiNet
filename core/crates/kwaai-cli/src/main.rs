@@ -607,6 +607,21 @@ async fn main() -> Result<()> {
                     if args.check {
                         print_info("Run 'kwaainet update' (without --check) to install");
                     } else {
+                        // On Windows, kwaainet.exe is locked while running — stop the
+                        // daemon and shard server first so they release the file handle.
+                        #[cfg(windows)]
+                        {
+                            let shard_mgr = ShardManager::new();
+                            if shard_mgr.is_running() {
+                                shard_mgr.stop_process();
+                                print_info("Shard server stopped for update.");
+                            }
+                            let node_mgr = DaemonManager::new();
+                            if node_mgr.is_running() {
+                                let _ = node_mgr.stop_process();
+                                print_info("Daemon stopped for update.");
+                            }
+                        }
                         println!("  Installing v{}…", info.version);
                         println!();
                         checker.install_update().await?;
