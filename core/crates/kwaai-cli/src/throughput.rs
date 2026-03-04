@@ -67,7 +67,19 @@ pub fn save(model: &str, compute_tps: f64, hidden_size: usize) -> Result<()> {
 /// Returns `None` if the file doesn't exist, the model has no entry, or the
 /// entry was written by an older version of kwaainet (plain `f64` format).
 pub fn load(model: &str) -> Option<ThroughputEntry> {
-    load_cache().remove(model)
+    let mut cache = load_cache();
+    // Exact match first.
+    if let Some(entry) = cache.remove(model) {
+        return Some(entry);
+    }
+    // Fallback: if only one entry exists, use it regardless of key.
+    // This handles the common mismatch between Ollama-style names
+    // (e.g. "llama3.1:8b") and HuggingFace-style names
+    // (e.g. "unsloth/Llama-3.1-8B-Instruct") for the same model.
+    if cache.len() == 1 {
+        return cache.into_values().next();
+    }
+    None
 }
 
 fn load_cache() -> HashMap<String, ThroughputEntry> {
