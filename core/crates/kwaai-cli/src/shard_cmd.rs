@@ -122,6 +122,19 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
             cfg.initial_peers.clone()
         };
 
+        // Stagger: spread DHT queries across 0–8 s using the last byte of our
+        // peer ID.  Prevents nodes started simultaneously from all querying
+        // before any announcement has propagated and all landing on block 0.
+        let stagger_ms =
+            (our_peer_id.to_bytes().last().copied().unwrap_or(0) as u64 % 8) * 1000;
+        if stagger_ms > 0 {
+            print_info(&format!(
+                "Staggering DHT query by {}s (peer-ID jitter)…",
+                stagger_ms / 1000
+            ));
+            tokio::time::sleep(Duration::from_millis(stagger_ms)).await;
+        }
+
         print_info(&format!(
             "Querying DHT for gap in {} ({} blocks)…",
             prefix, total
@@ -1125,6 +1138,27 @@ async fn pick_gap_blocks(
         bootstrap_peers,
     )
     .await;
+
+    // If the chain is empty the bootstrap peers may not have received other
+    // nodes' announcements yet (propagation lag, simultaneous start).
+    // Retry once after a short wait before defaulting to block 0.
+    let chain = if chain.is_empty() {
+        print_info("DHT returned no peers — waiting 5 s and retrying…");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        discover_chain(client, our_peer_id, dht_prefix, total_blocks, bootstrap_peers).await
+    } else {
+        chain
+    };
+
+    print_info(&format!(
+        "DHT chain: {} other node(s) visible{}",
+        chain.iter().filter(|e| e.peer_id != *our_peer_id).count(),
+        if chain.iter().all(|e| e.peer_id == *our_peer_id) {
+            " — joining as first node"
+        } else {
+            ""
+        }
+    ));
 
     let (start, end) =
         crate::rebalancer::pick_gap_from_chain(&chain, our_peer_id, total_blocks, target_blocks);
