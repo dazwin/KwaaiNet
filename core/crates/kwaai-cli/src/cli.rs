@@ -491,6 +491,8 @@ pub enum ShardAction {
     Api(ShardApiArgs),
     /// Download a HuggingFace model SafeTensors snapshot (no huggingface-cli required)
     Download(ShardDownloadArgs),
+    /// Show which block range this node would auto-assign (dry-run, no model load)
+    Gap,
 }
 
 #[derive(Args, Clone)]

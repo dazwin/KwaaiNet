@@ -73,6 +73,7 @@ pub async fn run(args: ShardArgs) -> Result<()> {
         ShardAction::Chain(a) => cmd_shard_chain(a).await,
         ShardAction::Api(a) => crate::shard_api::run(a).await,
         ShardAction::Download(a) => cmd_shard_download(a).await,
+        ShardAction::Gap => cmd_shard_gap().await,
     }
 }
 
@@ -94,6 +95,88 @@ pub async fn cmd_shard_download(args: ShardDownloadArgs) -> Result<()> {
         "Start serving: kwaainet shard serve --model-path \"{}\"",
         snapshot_dir.display()
     ));
+    print_separator();
+    Ok(())
+}
+
+// ── gap (dry-run gap detection) ───────────────────────────────────────────────
+
+/// Dry-run gap detection: show what block range this node would auto-assign
+/// without loading a model or registering an RPC handler.  Exit immediately.
+/// Use this to validate gap detection locally in seconds.
+async fn cmd_shard_gap() -> Result<()> {
+    let cfg = KwaaiNetConfig::load_or_create()?;
+    let daemon_addr = daemon_socket();
+    let mut client = P2PClient::connect(&daemon_addr)
+        .await
+        .context("Cannot connect to node — start it first with `kwaainet start --daemon`")?;
+    let peer_id_hex = client.identify().await.context("Failed to get local peer ID")?;
+    let our_peer_id =
+        PeerId::from_bytes(&hex::decode(&peer_id_hex)?).context("parse our peer ID")?;
+
+    let total = cfg.model_total_blocks() as usize;
+    let target_blocks = cfg.blocks as usize;
+    let prefix = cfg.effective_dht_prefix();
+    let bootstrap_peers: Vec<String> = if cfg.initial_peers.is_empty() {
+        NetworkConfig::with_petals_bootstrap().bootstrap_peers
+    } else {
+        cfg.initial_peers.clone()
+    };
+
+    print_box_header("🔍 Gap Detection Dry-Run");
+    println!("  Peer ID:      {}", our_peer_id.to_base58());
+    println!("  DHT prefix:   {}", prefix);
+    println!("  Total blocks: {}", total);
+    println!("  Target blocks:{}", target_blocks);
+    println!();
+
+    // Run discovery (includes retry on empty chain).
+    print_info("Querying DHT…");
+    let chain = discover_chain(&mut client, &our_peer_id, &prefix, total, &bootstrap_peers).await;
+    let chain = if chain.is_empty() {
+        print_info("DHT returned no peers — waiting 5 s and retrying…");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        discover_chain(&mut client, &our_peer_id, &prefix, total, &bootstrap_peers).await
+    } else {
+        chain
+    };
+
+    let others: Vec<_> = chain.iter().filter(|e| e.peer_id != our_peer_id).collect();
+    println!("  Other nodes visible: {}", others.len());
+    for e in &others {
+        println!(
+            "    {} → [{}, {})",
+            e.peer_id.to_base58(),
+            e.start_block,
+            e.end_block
+        );
+    }
+    println!();
+
+    let (start, end) =
+        crate::rebalancer::pick_gap_from_chain(&chain, &our_peer_id, total, target_blocks);
+
+    let is_gap = chain
+        .iter()
+        .filter(|e| e.peer_id != our_peer_id)
+        .any(|_| true)
+        && {
+            let mut cov = vec![0usize; total];
+            for e in chain.iter().filter(|e| e.peer_id != our_peer_id) {
+                for c in &mut cov[e.start_block.min(total)..e.end_block.min(total)] {
+                    *c += 1;
+                }
+            }
+            cov.iter().copied().min().unwrap_or(0) == 0
+        };
+
+    if others.is_empty() {
+        print_success(&format!("Would serve [{start}, {end}) — first node on network"));
+    } else if is_gap {
+        print_success(&format!("Would serve [{start}, {end}) — fills a genuine gap"));
+    } else {
+        print_success(&format!("Would serve [{start}, {end}) — joins as redundant (network fully covered)"));
+    }
     print_separator();
     Ok(())
 }
