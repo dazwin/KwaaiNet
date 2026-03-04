@@ -139,7 +139,7 @@ kwaai-hivemind-dht = { path = "crates/kwaai-hivemind-dht", version = "0.3.5" }
 kwaai-distributed  = { path = "crates/kwaai-distributed",  version = "0.3.5" }
 kwaai-inference    = { path = "crates/kwaai-inference",    version = "0.3.5" }
 kwaai-cli          = { path = "crates/kwaai-cli",          version = "0.3.5" }
-kwaai-p2p-daemon   = { path = "crates/kwaai-p2p-daemon",   version = "0.3.5" }
+kwaai-p2p-daemon   = { path = "crates/kwaai-p2p-daemon",   version = "0.1.4" }
 kwaai-wasm         = { path = "crates/kwaai-wasm",         version = "0.3.5" }
 
 # Async runtime

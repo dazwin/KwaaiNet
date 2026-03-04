@@ -1069,8 +1069,8 @@ pub async fn discover_chain(
             let rt = result.result_type;
             if rt == 1 {
                 // FoundRegular — single value, peer_id embedded in map
-                if let Some(entry) = decode_server_info_regular(&result.value) {
-                    servers.entry(entry.peer_id.to_base58()).or_insert(entry);
+                if let Some((key, entry)) = decode_server_info_regular(&result.value) {
+                    servers.entry(key).or_insert(entry);
                 }
             } else if rt == 2 {
                 // FoundDictionary — multiple subkeys (Python Hivemind)
@@ -1129,15 +1129,30 @@ async fn pick_gap_blocks(
 
 /// Parse `Ext(64, [state, throughput, {start_block, end_block, peer_id, …}])`
 /// from a FoundRegular value.
-fn decode_server_info_regular(bytes: &[u8]) -> Option<BlockServerEntry> {
+///
+/// Returns `(dedup_key, entry)`.  Legacy nodes (pre-v0.3.3) omit `peer_id`; we
+/// synthesise a stable key from `public_name:start_block` so they still count
+/// for gap detection even though they cannot be routed to directly.
+fn decode_server_info_regular(bytes: &[u8]) -> Option<(String, BlockServerEntry)> {
     let (start_block, end_block, public_name, peer_id_b58) = decode_server_info_ext(bytes)?;
-    let peer_id = peer_id_b58.parse::<PeerId>().ok()?;
-    Some(BlockServerEntry {
-        peer_id,
-        start_block,
-        end_block,
-        public_name,
-    })
+    let (dedup_key, peer_id) = match peer_id_b58.parse::<PeerId>() {
+        Ok(pid) => (pid.to_base58(), pid),
+        Err(_) => {
+            // Legacy node: no peer_id field.  Use a synthetic stable key so the
+            // coverage slot is filled.  PeerId::random() is unroutable but harmless.
+            let key = format!("legacy:{}:{}", public_name, start_block);
+            (key, PeerId::random())
+        }
+    };
+    Some((
+        dedup_key,
+        BlockServerEntry {
+            peer_id,
+            start_block,
+            end_block,
+            public_name,
+        },
+    ))
 }
 
 /// Parse `Ext(80, [expiry, created, [[subkey_bytes, value_bytes, expiry], …]])`
