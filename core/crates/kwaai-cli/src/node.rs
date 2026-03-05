@@ -89,7 +89,7 @@ impl VpkInfo {
 /// trust model (e.g., map.kwaai.ai v2) display trust badges; legacy clients
 /// ignore the field.
 struct DHTServerInfo {
-    state: i32,
+    pub state: i32,
     throughput: f64,
     start_block: i32,
     end_block: i32,
@@ -537,17 +537,13 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         None
     };
 
-    // Block coverage is only announced when the shard model is fully loaded.
-    // Until then we advertise [0, 0) so the node appears on the map but is
-    // not counted as serving any blocks.
-    let (announce_start, announce_end) = if ShardManager::shard_is_ready() {
-        (
-            config.start_block as i32,
-            config.effective_end_block() as i32,
-        )
-    } else {
-        (0, 0)
-    };
+    // Always announce the configured block range so the node appears on the map.
+    // When the shard is not yet loaded we use state=0 (joining) instead of
+    // state=2 (online) so the map can display the node without counting it as
+    // actively serving inference.
+    let shard_ready = ShardManager::shard_is_ready();
+    let announce_start = config.start_block as i32;
+    let announce_end = config.effective_end_block() as i32;
 
     let mut server_info = DHTServerInfo::new(
         announce_start,
@@ -559,6 +555,9 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         vpk_info,
         peer_id.to_base58(),
     );
+    if !shard_ready {
+        server_info.state = 0; // joining — blocks reserved but not yet serving
+    }
     announce(
         &mut client,
         peer_id,
@@ -641,13 +640,11 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                         config.blocks = fresh.blocks;
                     }
                 }
-                let (sb, eb) = if ShardManager::shard_is_ready() {
-                    (config.start_block as i32, config.effective_end_block() as i32)
-                } else {
-                    (0, 0)
-                };
+                let sb = config.start_block as i32;
+                let eb = config.effective_end_block() as i32;
                 server_info.start_block = sb;
                 server_info.end_block = eb;
+                server_info.state = if ShardManager::shard_is_ready() { 2 } else { 0 };
                 if let Err(e) = announce(
                     &mut client, peer_id, &storage, &bootstrap_peers,
                     &prefix, &repository, config.model_total_blocks(),
@@ -691,14 +688,12 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                     server_info.throughput = fresh_tps;
                 }
 
-                let (sb, eb) = if ShardManager::shard_is_ready() {
-                    (config.start_block as i32, config.effective_end_block() as i32)
-                } else {
-                    (0, 0)
-                };
+                let sb = config.start_block as i32;
+                let eb = config.effective_end_block() as i32;
                 server_info.start_block = sb;
                 server_info.end_block = eb;
-                info!("Re-announcing to DHT (shard_ready={})...", sb != 0 || eb != 0);
+                server_info.state = if ShardManager::shard_is_ready() { 2 } else { 0 };
+                info!("Re-announcing to DHT (shard_ready={})...", ShardManager::shard_is_ready());
                 if let Err(e) = announce(
                     &mut client, peer_id, &storage, &bootstrap_peers,
                     &prefix, &repository, config.model_total_blocks(),
@@ -739,30 +734,22 @@ async fn announce(
     end_block: i32,
     server_info: &DHTServerInfo,
 ) -> Result<()> {
-    if start_block == end_block {
-        info!(
-            "DHT prefix: {} (shard loading — blocks not yet ready)",
-            prefix
-        );
-    } else {
-        info!(
-            "DHT prefix: {} (blocks .{} – .{})",
-            prefix,
-            start_block,
-            end_block - 1
-        );
-    }
+    let joining = server_info.state != 2;
+    info!(
+        "DHT prefix: {} (blocks .{} – .{}{})",
+        prefix,
+        start_block,
+        end_block - 1,
+        if joining { ", joining" } else { "" }
+    );
 
     let info_bytes = server_info.to_msgpack()?;
     let subkey = rmp_serde::to_vec(&peer_id.to_base58())?;
     let node_info = NodeInfo::from_peer_id(peer_id);
 
-    // Build block STORE request
-    // Only announce blocks when the shard is loaded (start != end).
-    // An empty STORE request returns "0/0 stored" which is misleading, so skip it.
-    if start_block == end_block {
-        info!("⏳ Shard loading — block announcement deferred");
-    } else {
+    // Build block STORE request — always announce configured blocks so the node
+    // appears on the map. State=0 (joining) when shard is not yet loaded.
+    {
         let mut keys = Vec::new();
         let mut subkeys = Vec::new();
         let mut values = Vec::new();
