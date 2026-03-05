@@ -457,10 +457,17 @@ impl TransformerShard {
              hidden={hidden_dim} heads={num_heads} ({num_kv_heads} kv)"
         );
 
-        // Memory-map all safetensors shards (only accessed pages are read)
+        // Memory-map all safetensors shards (only accessed pages are read).
+        // On Metal devices, weights are loaded on CPU first to avoid BF16→F16
+        // cast errors on older GPUs (Intel/AMD), then moved to the target device
+        // layer-by-layer during the model build.
         // SAFETY: files must not be modified while the model is loaded.
+        let load_device = match device {
+            Device::Metal(_) => &Device::Cpu,
+            other => other,
+        };
         let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(safetensors_paths, DType::F16, device)
+            VarBuilder::from_mmaped_safetensors(safetensors_paths, cfg.dtype, load_device)
                 .map_err(|e| InferenceError::ModelLoadError(format!("mmap safetensors: {e}")))?
         };
 
