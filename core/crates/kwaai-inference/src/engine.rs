@@ -314,7 +314,7 @@ impl InferenceProvider for InferenceEngine {
         // ── Dispatch to the real loader ──────────────────────────────────────
         let (weights, config, vocab_size, _num_layers, is_quantized) = match format {
             ModelFormat::Gguf | ModelFormat::Ggml => {
-                let m = loader::load_gguf(path, &self.device)?;
+                let m = loader::load_gguf(path, &self.device, self.config.max_seq_len)?;
                 let c = m.config.clone();
                 let v = m.vocab_size;
                 let l = m.num_layers;

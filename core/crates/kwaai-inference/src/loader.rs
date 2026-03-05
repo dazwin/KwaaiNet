@@ -53,7 +53,7 @@ pub struct GgufModel {
 ///
 /// Reads `general.architecture` from the GGUF metadata to pick the right
 /// weight loader, then extracts architecture config and loads real weights.
-pub fn load_gguf(path: &Path, device: &Device) -> InferenceResult<GgufModel> {
+pub fn load_gguf(path: &Path, device: &Device, max_seq_len_cap: usize) -> InferenceResult<GgufModel> {
     use candle_transformers::models::{quantized_llama, quantized_qwen2};
 
     let mut file = std::fs::File::open(path).map_err(|e| {
@@ -83,7 +83,9 @@ pub fn load_gguf(path: &Path, device: &Device) -> InferenceResult<GgufModel> {
     let hidden_dim = meta_usize(&gguf, &format!("{pfx}.embedding_length")).unwrap_or(4_096);
     let inter_dim = meta_usize(&gguf, &format!("{pfx}.feed_forward_length")).unwrap_or(11_008);
     let rope_theta = meta_f32(&gguf, &format!("{pfx}.rope.freq_base")).unwrap_or(10_000.0);
-    let max_seq_len = meta_usize(&gguf, &format!("{pfx}.context_length")).unwrap_or(4_096);
+    let max_seq_len = meta_usize(&gguf, &format!("{pfx}.context_length"))
+        .unwrap_or(4_096)
+        .min(max_seq_len_cap);
 
     info!(
         "GGUF arch={arch}: {num_layers} layers, {num_heads} heads ({num_kv_heads} kv), \
